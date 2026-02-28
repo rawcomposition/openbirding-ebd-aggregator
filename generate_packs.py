@@ -38,6 +38,7 @@ class PackEntry:
     center_lat: Optional[float]
     center_lng: Optional[float]
     name: str
+    tags: list[str]
 
 
 @dataclass
@@ -60,6 +61,7 @@ class PackMetadata:
     id: int
     region: str
     name: str
+    tags: list[str]
     hotspots: int
     clusters: list
     size: int
@@ -193,7 +195,8 @@ def load_packs() -> list[PackEntry]:
             region=p['region'],
             center_lat=p.get('center_lat'),
             center_lng=p.get('center_lng'),
-            name=p['name']
+            name=p['name'],
+            tags=p.get('tags', []),
         )
         for p in data
     ]
@@ -407,6 +410,7 @@ def generate_pack(
         id=pack.id,
         region=pack.region,
         name=pack.name,
+        tags=pack.tags,
         hotspots=len(ebird_hotspots),
         clusters=clusters,
         size=file_size,
@@ -537,6 +541,7 @@ def main():
                     'id': m.id,
                     'region': m.region,
                     'name': m.name,
+                    'tags': m.tags,
                     'hotspots': m.hotspots,
                     'clusters': m.clusters,
                     'size': m.size,

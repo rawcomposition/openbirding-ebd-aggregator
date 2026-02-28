@@ -109,7 +109,8 @@
     "region": "BS",
     "center_lat": 24.091736,
     "center_lng": -76.594028,
-    "name": "Bahamas"
+    "name": "Bahamas",
+    "tags": ["The Bahamas"]
   },
   {
     "id": 17,
@@ -263,7 +264,8 @@
     "region": "CV",
     "center_lat": 16.00361,
     "center_lng": -24.009304,
-    "name": "Cape Verde"
+    "name": "Cape Verde",
+    "tags": ["Cabo Verde"]
   },
   {
     "id": 39,
@@ -305,7 +307,8 @@
     "region": "CN",
     "center_lat": 34.670431,
     "center_lng": 104.165814,
-    "name": "China"
+    "name": "China",
+    "tags": ["PRC", "People's Republic of China"]
   },
   {
     "id": 45,
@@ -375,7 +378,8 @@
     "region": "CI",
     "center_lat": 7.549224,
     "center_lng": -5.547099,
-    "name": "Côte d'Ivoire"
+    "name": "Côte d'Ivoire",
+    "tags": ["Ivory Coast", "Cote d'Ivoire"]
   },
   {
     "id": 55,
@@ -396,7 +400,8 @@
     "region": "CW",
     "center_lat": 12.185557,
     "center_lng": -68.900971,
-    "name": "Curaçao"
+    "name": "Curaçao",
+    "tags": ["Curacao"]
   },
   {
     "id": 58,
@@ -410,7 +415,8 @@
     "region": "CZ",
     "center_lat": 49.797611,
     "center_lng": 15.474197,
-    "name": "Czech Republic"
+    "name": "Czech Republic",
+    "tags": ["Czechia"]
   },
   {
     "id": 60,
@@ -445,7 +451,8 @@
     "region": "CD",
     "center_lat": -4.034789,
     "center_lng": 21.756176,
-    "name": "DR Congo"
+    "name": "DR Congo",
+    "tags": ["Democratic Republic of the Congo", "DRC", "Zaire"]
   },
   {
     "id": 65,
@@ -494,7 +501,8 @@
     "region": "SZ",
     "center_lat": -26.518375,
     "center_lng": 31.465679,
-    "name": "Eswatini"
+    "name": "Eswatini",
+    "tags": ["Swaziland"]
   },
   {
     "id": 72,
@@ -508,14 +516,16 @@
     "region": "FK",
     "center_lat": -51.957637,
     "center_lng": -59.573583,
-    "name": "Falkland Islands (Malvinas)"
+    "name": "Falkland Islands (Malvinas)",
+    "tags": ["Falklands", "Islas Malvinas"]
   },
   {
     "id": 74,
     "region": "FO",
     "center_lat": 61.897834,
     "center_lng": -6.969916,
-    "name": "Faroe Islands"
+    "name": "Faroe Islands",
+    "tags": ["Faroes"]
   },
   {
     "id": 75,
@@ -571,21 +581,24 @@
     "region": "GM",
     "center_lat": 13.441687,
     "center_lng": -15.307575,
-    "name": "Gambia"
+    "name": "Gambia",
+    "tags": ["The Gambia"]
   },
   {
     "id": 83,
     "region": "GE",
     "center_lat": 42.311527,
     "center_lng": 43.366234,
-    "name": "Georgia"
+    "name": "Georgia",
+    "tags": ["Georgia (country)", "Sakartvelo"]
   },
   {
     "id": 84,
     "region": "DE",
     "center_lat": 51.163192,
     "center_lng": 10.454866,
-    "name": "Germany"
+    "name": "Germany",
+    "tags": ["Deutschland"]
   },
   {
     "id": 85,
@@ -613,7 +626,8 @@
     "region": "GL",
     "center_lat": 71.685963,
     "center_lng": -42.287901,
-    "name": "Greenland"
+    "name": "Greenland",
+    "tags": ["Kalaallit Nunaat"]
   },
   {
     "id": 89,
@@ -690,7 +704,8 @@
     "region": "XX",
     "center_lat": null,
     "center_lng": null,
-    "name": "High Seas"
+    "name": "High Seas",
+    "tags": ["International Waters"]
   },
   {
     "id": 100,
@@ -725,7 +740,8 @@
     "region": "IN",
     "center_lat": 21.91711,
     "center_lng": 82.79712,
-    "name": "India"
+    "name": "India",
+    "tags": ["Bharat"]
   },
   {
     "id": 105,
@@ -739,7 +755,8 @@
     "region": "IR",
     "center_lat": 32.420172,
     "center_lng": 53.673451,
-    "name": "Iran"
+    "name": "Iran",
+    "tags": ["Persia"]
   },
   {
     "id": 107,
@@ -753,7 +770,8 @@
     "region": "IE",
     "center_lat": 53.435,
     "center_lng": -8.328332,
-    "name": "Ireland"
+    "name": "Ireland",
+    "tags": ["Republic of Ireland", "Eire"]
   },
   {
     "id": 109,
@@ -774,7 +792,8 @@
     "region": "IT",
     "center_lat": 41.29194,
     "center_lng": 12.575786,
-    "name": "Italy"
+    "name": "Italy",
+    "tags": ["Italia"]
   },
   {
     "id": 112,
@@ -914,7 +933,8 @@
     "region": "MO",
     "center_lat": 22.162757,
     "center_lng": 113.563892,
-    "name": "Macau"
+    "name": "Macau",
+    "tags": ["Macao"]
   },
   {
     "id": 132,
@@ -1054,7 +1074,8 @@
     "region": "MM",
     "center_lat": 18.683853,
     "center_lng": 96.68303,
-    "name": "Myanmar"
+    "name": "Myanmar",
+    "tags": ["Burma"]
   },
   {
     "id": 152,
@@ -1082,7 +1103,8 @@
     "region": "NL",
     "center_lat": 52.154875,
     "center_lng": 5.326746,
-    "name": "Netherlands"
+    "name": "Netherlands",
+    "tags": ["Holland"]
   },
   {
     "id": 156,
@@ -1096,7 +1118,8 @@
     "region": "NZ",
     "center_lat": -41.883,
     "center_lng": 173.327,
-    "name": "New Zealand"
+    "name": "New Zealand",
+    "tags": ["Aotearoa"]
   },
   {
     "id": 158,
@@ -1187,7 +1210,8 @@
     "region": "PS",
     "center_lat": 31.887586,
     "center_lng": 34.902241,
-    "name": "Palestinian Territory"
+    "name": "Palestinian Territory",
+    "tags": ["Palestine", "West Bank", "Gaza"]
   },
   {
     "id": 171,
@@ -1201,7 +1225,8 @@
     "region": "PG",
     "center_lat": -6.205606,
     "center_lng": 148.936065,
-    "name": "Papua New Guinea"
+    "name": "Papua New Guinea",
+    "tags": ["PNG"]
   },
   {
     "id": 173,
@@ -1222,7 +1247,8 @@
     "region": "PH",
     "center_lat": 12.82854,
     "center_lng": 121.766845,
-    "name": "Philippines"
+    "name": "Philippines",
+    "tags": ["Pilipinas"]
   },
   {
     "id": 176,
@@ -1264,7 +1290,8 @@
     "region": "RE",
     "center_lat": -21.130833,
     "center_lng": 55.526806,
-    "name": "Réunion"
+    "name": "Réunion",
+    "tags": ["Reunion"]
   },
   {
     "id": 182,
@@ -1355,7 +1382,8 @@
     "region": "ST",
     "center_lat": 0.843751,
     "center_lng": 6.96125,
-    "name": "São Tomé and Príncipe"
+    "name": "São Tomé and Príncipe",
+    "tags": ["Sao Tome and Principe"]
   },
   {
     "id": 195,
@@ -1551,7 +1579,8 @@
     "region": "TL",
     "center_lat": -8.815799,
     "center_lng": 125.693577,
-    "name": "Timor-Leste"
+    "name": "Timor-Leste",
+    "tags": ["East Timor"]
   },
   {
     "id": 223,
@@ -1593,7 +1622,8 @@
     "region": "TR",
     "center_lat": 38.959465,
     "center_lng": 35.24201,
-    "name": "Türkiye"
+    "name": "Türkiye",
+    "tags": ["Turkey"]
   },
   {
     "id": 229,
@@ -1635,14 +1665,16 @@
     "region": "AE",
     "center_lat": 24.287956,
     "center_lng": 53.746952,
-    "name": "United Arab Emirates"
+    "name": "United Arab Emirates",
+    "tags": ["UAE"]
   },
   {
     "id": 235,
     "region": "GB",
     "center_lat": 54.074,
     "center_lng": -1.958,
-    "name": "United Kingdom"
+    "name": "United Kingdom",
+    "tags": ["UK", "Britain", "Great Britain"]
   },
   {
     "id": 236,
@@ -1677,7 +1709,8 @@
     "region": "VA",
     "center_lat": 41.903831,
     "center_lng": 12.45203,
-    "name": "Vatican City (Holy See)"
+    "name": "Vatican City (Holy See)",
+    "tags": ["The Vatican"]
   },
   {
     "id": 241,
@@ -1698,14 +1731,16 @@
     "region": "VG",
     "center_lat": 18.527779,
     "center_lng": -64.560276,
-    "name": "Virgin Islands (British)"
+    "name": "Virgin Islands (British)",
+    "tags": ["BVI"]
   },
   {
     "id": 244,
     "region": "VI",
     "center_lat": 18.044306,
     "center_lng": -64.543194,
-    "name": "Virgin Islands (U.S.)"
+    "name": "Virgin Islands (U.S.)",
+    "tags": ["USVI"]
   },
   {
     "id": 245,
@@ -1747,510 +1782,583 @@
     "region": "MX",
     "center_lat": 23.625479,
     "center_lng": -102.539512,
-    "name": "Mexico"
+    "name": "Mexico",
+    "tags": ["México"]
   },
   {
     "id": 251,
     "region": "US-AL",
     "center_lat": 32.613064,
     "center_lng": -86.682758,
-    "name": "Alabama"
+    "name": "Alabama",
+    "tags": ["United States", "USA", "US", "AL"]
   },
   {
     "id": 252,
     "region": "US-AK",
     "center_lat": 61.858758,
     "center_lng": -153.10578,
-    "name": "Alaska"
+    "name": "Alaska",
+    "tags": ["United States", "USA", "US", "AK"]
   },
   {
     "id": 253,
     "region": "US-AZ",
     "center_lat": 34.16688,
     "center_lng": -111.930141,
-    "name": "Arizona"
+    "name": "Arizona",
+    "tags": ["United States", "USA", "US", "AZ"]
   },
   {
     "id": 254,
     "region": "US-AR",
     "center_lat": 34.752097,
     "center_lng": -92.131282,
-    "name": "Arkansas"
+    "name": "Arkansas",
+    "tags": ["United States", "USA", "US", "AR"]
   },
   {
     "id": 255,
     "region": "US-CA",
     "center_lat": 37.270357,
     "center_lng": -119.272522,
-    "name": "California"
+    "name": "California",
+    "tags": ["United States", "USA", "US", "CA"]
   },
   {
     "id": 256,
     "region": "US-CO",
     "center_lat": 38.998921,
     "center_lng": -105.551391,
-    "name": "Colorado"
+    "name": "Colorado",
+    "tags": ["United States", "USA", "US", "CO"]
   },
   {
     "id": 257,
     "region": "US-CT",
     "center_lat": 41.514872,
     "center_lng": -72.758979,
-    "name": "Connecticut"
+    "name": "Connecticut",
+    "tags": ["United States", "USA", "US", "CT"]
   },
   {
     "id": 258,
     "region": "US-DE",
     "center_lat": 39.133909,
     "center_lng": -75.418893,
-    "name": "Delaware"
+    "name": "Delaware",
+    "tags": ["United States", "USA", "US", "DE"]
   },
   {
     "id": 259,
     "region": "US-FL",
     "center_lat": 27.761264,
     "center_lng": -83.679935,
-    "name": "Florida"
+    "name": "Florida",
+    "tags": ["United States", "USA", "US", "FL"]
   },
   {
     "id": 260,
     "region": "US-GA",
     "center_lat": 32.679586,
     "center_lng": -83.223217,
-    "name": "Georgia"
+    "name": "Georgia",
+    "tags": ["United States", "USA", "US", "Georgia (state)", "GA"]
   },
   {
     "id": 261,
     "region": "US-HI",
     "center_lat": 20.999728,
     "center_lng": -157.17753,
-    "name": "Hawaii"
+    "name": "Hawaii",
+    "tags": ["United States", "USA", "US", "Hawai'i", "HI"]
   },
   {
     "id": 262,
     "region": "US-ID",
     "center_lat": 45.495683,
     "center_lng": -114.141906,
-    "name": "Idaho"
+    "name": "Idaho",
+    "tags": ["United States", "USA", "US", "ID"]
   },
   {
     "id": 263,
     "region": "US-IL",
     "center_lat": 39.7403,
     "center_lng": -89.504852,
-    "name": "Illinois"
+    "name": "Illinois",
+    "tags": ["United States", "USA", "US", "IL"]
   },
   {
     "id": 264,
     "region": "US-IN",
     "center_lat": 39.767687,
     "center_lng": -86.438701,
-    "name": "Indiana"
+    "name": "Indiana",
+    "tags": ["United States", "USA", "US", "IN"]
   },
   {
     "id": 265,
     "region": "US-IA",
     "center_lat": 41.939597,
     "center_lng": -93.38749,
-    "name": "Iowa"
+    "name": "Iowa",
+    "tags": ["United States", "USA", "US", "IA"]
   },
   {
     "id": 266,
     "region": "US-KS",
     "center_lat": 38.498365,
     "center_lng": -98.320643,
-    "name": "Kansas"
+    "name": "Kansas",
+    "tags": ["United States", "USA", "US", "KS"]
   },
   {
     "id": 267,
     "region": "US-KY",
     "center_lat": 37.821976,
     "center_lng": -85.76894,
-    "name": "Kentucky"
+    "name": "Kentucky",
+    "tags": ["United States", "USA", "US", "KY"]
   },
   {
     "id": 268,
     "region": "US-LA",
     "center_lat": 30.974467,
     "center_lng": -91.431957,
-    "name": "Louisiana"
+    "name": "Louisiana",
+    "tags": ["United States", "USA", "US", "LA"]
   },
   {
     "id": 269,
     "region": "US-ME",
     "center_lat": 45.217293,
     "center_lng": -69.015343,
-    "name": "Maine"
+    "name": "Maine",
+    "tags": ["United States", "USA", "US", "ME"]
   },
   {
     "id": 270,
     "region": "US-MD",
     "center_lat": 38.818117,
     "center_lng": -77.268577,
-    "name": "Maryland"
+    "name": "Maryland",
+    "tags": ["United States", "USA", "US", "MD"]
   },
   {
     "id": 271,
     "region": "US-MA",
     "center_lat": 42.062498,
     "center_lng": -71.717953,
-    "name": "Massachusetts"
+    "name": "Massachusetts",
+    "tags": ["United States", "USA", "US", "MA"]
   },
   {
     "id": 272,
     "region": "US-MI",
     "center_lat": 44.967967,
     "center_lng": -86.419044,
-    "name": "Michigan"
+    "name": "Michigan",
+    "tags": ["United States", "USA", "US", "MI"]
   },
   {
     "id": 273,
     "region": "US-MN",
     "center_lat": 46.4427,
     "center_lng": -93.369472,
-    "name": "Minnesota"
+    "name": "Minnesota",
+    "tags": ["United States", "USA", "US", "MN"]
   },
   {
     "id": 274,
     "region": "US-MS",
     "center_lat": 32.586383,
     "center_lng": -89.876106,
-    "name": "Mississippi"
+    "name": "Mississippi",
+    "tags": ["United States", "USA", "US", "MS"]
   },
   {
     "id": 275,
     "region": "US-MO",
     "center_lat": 38.304559,
     "center_lng": -92.437496,
-    "name": "Missouri"
+    "name": "Missouri",
+    "tags": ["United States", "USA", "US", "MO"]
   },
   {
     "id": 276,
     "region": "US-MT",
     "center_lat": 46.679575,
     "center_lng": -110.045227,
-    "name": "Montana"
+    "name": "Montana",
+    "tags": ["United States", "USA", "US", "MT"]
   },
   {
     "id": 277,
     "region": "US-NE",
     "center_lat": 41.501345,
     "center_lng": -99.68042,
-    "name": "Nebraska"
+    "name": "Nebraska",
+    "tags": ["United States", "USA", "US", "NE"]
   },
   {
     "id": 278,
     "region": "US-NV",
     "center_lat": 38.501194,
     "center_lng": -117.022343,
-    "name": "Nevada"
+    "name": "Nevada",
+    "tags": ["United States", "USA", "US", "NV"]
   },
   {
     "id": 279,
     "region": "US-NH",
     "center_lat": 44.003255,
     "center_lng": -71.583213,
-    "name": "New Hampshire"
+    "name": "New Hampshire",
+    "tags": ["United States", "USA", "US", "NH"]
   },
   {
     "id": 280,
     "region": "US-NJ",
     "center_lat": 40.143808,
     "center_lng": -74.730613,
-    "name": "New Jersey"
+    "name": "New Jersey",
+    "tags": ["United States", "USA", "US", "NJ"]
   },
   {
     "id": 281,
     "region": "US-NM",
     "center_lat": 34.16566,
     "center_lng": -106.025379,
-    "name": "New Mexico"
+    "name": "New Mexico",
+    "tags": ["United States", "USA", "US", "NM"]
   },
   {
     "id": 282,
     "region": "US-NY",
     "center_lat": 42.75358,
     "center_lng": -75.809842,
-    "name": "New York"
+    "name": "New York",
+    "tags": ["United States", "USA", "US", "NY"]
   },
   {
     "id": 283,
     "region": "US-NC",
     "center_lat": 35.21534,
     "center_lng": -79.891041,
-    "name": "North Carolina"
+    "name": "North Carolina",
+    "tags": ["United States", "USA", "US", "NC"]
   },
   {
     "id": 284,
     "region": "US-ND",
     "center_lat": 47.468136,
     "center_lng": -100.302372,
-    "name": "North Dakota"
+    "name": "North Dakota",
+    "tags": ["United States", "USA", "US", "ND"]
   },
   {
     "id": 285,
     "region": "US-OH",
     "center_lat": 40.190374,
     "center_lng": -82.668828,
-    "name": "Ohio"
+    "name": "Ohio",
+    "tags": ["United States", "USA", "US", "OH"]
   },
   {
     "id": 286,
     "region": "US-OK",
     "center_lat": 35.308089,
     "center_lng": -98.715786,
-    "name": "Oklahoma"
+    "name": "Oklahoma",
+    "tags": ["United States", "USA", "US", "OK"]
   },
   {
     "id": 287,
     "region": "US-OR",
     "center_lat": 44.142322,
     "center_lng": -120.514282,
-    "name": "Oregon"
+    "name": "Oregon",
+    "tags": ["United States", "USA", "US", "OR"]
   },
   {
     "id": 288,
     "region": "US-PA",
     "center_lat": 40.993654,
     "center_lng": -77.604798,
-    "name": "Pennsylvania"
+    "name": "Pennsylvania",
+    "tags": ["United States", "USA", "US", "PA"]
   },
   {
     "id": 289,
     "region": "US-RI",
     "center_lat": 41.58299,
     "center_lng": -71.503788,
-    "name": "Rhode Island"
+    "name": "Rhode Island",
+    "tags": ["United States", "USA", "US", "RI"]
   },
   {
     "id": 290,
     "region": "US-SC",
     "center_lat": 33.632659,
     "center_lng": -80.950508,
-    "name": "South Carolina"
+    "name": "South Carolina",
+    "tags": ["United States", "USA", "US", "SC"]
   },
   {
     "id": 291,
     "region": "US-SD",
     "center_lat": 44.212734,
     "center_lng": -100.246853,
-    "name": "South Dakota"
+    "name": "South Dakota",
+    "tags": ["United States", "USA", "US", "SD"]
   },
   {
     "id": 292,
     "region": "US-TN",
     "center_lat": 35.831575,
     "center_lng": -85.979102,
-    "name": "Tennessee"
+    "name": "Tennessee",
+    "tags": ["United States", "USA", "US", "TN"]
   },
   {
     "id": 293,
     "region": "US-TX",
     "center_lat": 31.170758,
     "center_lng": -100.077263,
-    "name": "Texas"
+    "name": "Texas",
+    "tags": ["United States", "USA", "US", "TX"]
   },
   {
     "id": 294,
     "region": "US-UT",
     "center_lat": 39.501415,
     "center_lng": -111.547508,
-    "name": "Utah"
+    "name": "Utah",
+    "tags": ["United States", "USA", "US", "UT"]
   },
   {
     "id": 295,
     "region": "US-VT",
     "center_lat": 43.871938,
     "center_lng": -72.45557,
-    "name": "Vermont"
+    "name": "Vermont",
+    "tags": ["United States", "USA", "US", "VT"]
   },
   {
     "id": 296,
     "region": "US-VA",
     "center_lat": 38.002859,
     "center_lng": -79.458668,
-    "name": "Virginia"
+    "name": "Virginia",
+    "tags": ["United States", "USA", "US", "VA"]
   },
   {
     "id": 297,
     "region": "US-WA",
     "center_lat": 47.274058,
     "center_lng": -120.837644,
-    "name": "Washington"
+    "name": "Washington",
+    "tags": ["United States", "USA", "US", "Washington State", "WA"]
   },
   {
     "id": 298,
     "region": "US-WV",
     "center_lat": 38.920654,
     "center_lng": -80.180252,
-    "name": "West Virginia"
+    "name": "West Virginia",
+    "tags": ["United States", "USA", "US", "WV"]
   },
   {
     "id": 299,
     "region": "US-WI",
     "center_lat": 44.785736,
     "center_lng": -89.847389,
-    "name": "Wisconsin"
+    "name": "Wisconsin",
+    "tags": ["United States", "USA", "US", "WI"]
   },
   {
     "id": 300,
     "region": "US-WY",
     "center_lat": 43.000234,
     "center_lng": -107.553562,
-    "name": "Wyoming"
+    "name": "Wyoming",
+    "tags": ["United States", "USA", "US", "WY"]
   },
   {
     "id": 301,
     "region": "US-DC",
     "center_lat": 38.902117,
     "center_lng": -77.015103,
-    "name": "District of Columbia"
+    "name": "District of Columbia",
+    "tags": ["United States", "USA", "US", "Washington DC", "DC"]
   },
   {
     "id": 302,
     "region": "CA-AB",
     "center_lat": 54.500032,
     "center_lng": -115.000189,
-    "name": "Alberta"
+    "name": "Alberta",
+    "tags": ["Canada", "AB"]
   },
   {
     "id": 303,
     "region": "CA-BC",
     "center_lat": 54.154339,
     "center_lng": -126.55321,
-    "name": "British Columbia"
+    "name": "British Columbia",
+    "tags": ["Canada", "BC"]
   },
   {
     "id": 304,
     "region": "CA-MB",
     "center_lat": 50.108,
     "center_lng": -98.882,
-    "name": "Manitoba"
+    "name": "Manitoba",
+    "tags": ["Canada", "MB"]
   },
   {
     "id": 305,
     "region": "CA-NB",
     "center_lat": 46.278069,
     "center_lng": -66.411133,
-    "name": "New Brunswick"
+    "name": "New Brunswick",
+    "tags": ["Canada", "NB"]
   },
   {
     "id": 306,
     "region": "CA-NL",
     "center_lat": 53.52069,
     "center_lng": -60.220285,
-    "name": "Newfoundland and Labrador"
+    "name": "Newfoundland and Labrador",
+    "tags": ["Canada", "NL"]
   },
   {
     "id": 307,
     "region": "CA-NS",
     "center_lat": 45.308169,
     "center_lng": -63.01917,
-    "name": "Nova Scotia"
+    "name": "Nova Scotia",
+    "tags": ["Canada", "NS"]
   },
   {
     "id": 308,
     "region": "CA-NT",
     "center_lat": 69.380477,
     "center_lng": -119.240362,
-    "name": "Northwest Territories"
+    "name": "Northwest Territories",
+    "tags": ["Canada", "NT"]
   },
   {
     "id": 309,
     "region": "CA-NU",
     "center_lat": 67.23887,
     "center_lng": -91.092032,
-    "name": "Nunavut"
+    "name": "Nunavut",
+    "tags": ["Canada", "NU"]
   },
   {
     "id": 310,
     "region": "CA-ON",
     "center_lat": 45.038,
     "center_lng": -79.788,
-    "name": "Ontario"
+    "name": "Ontario",
+    "tags": ["Canada", "ON"]
   },
   {
     "id": 311,
     "region": "CA-PE",
     "center_lat": 46.503834,
     "center_lng": -63.192501,
-    "name": "Prince Edward Island"
+    "name": "Prince Edward Island",
+    "tags": ["Canada", "PE"]
   },
   {
     "id": 312,
     "region": "CA-QC",
     "center_lat": 46.304,
     "center_lng": -72.708,
-    "name": "Quebec"
+    "name": "Quebec",
+    "tags": ["Canada", "QC"]
   },
   {
     "id": 313,
     "region": "CA-SK",
     "center_lat": 51.215,
     "center_lng": -106.202,
-    "name": "Saskatchewan"
+    "name": "Saskatchewan",
+    "tags": ["Canada", "SK"]
   },
   {
     "id": 314,
     "region": "CA-YT",
     "center_lat": 64.82397,
     "center_lng": -132.398097,
-    "name": "Yukon Territory"
+    "name": "Yukon Territory",
+    "tags": ["Canada", "YT"]
   },
   {
     "id": 315,
     "region": "AU-NSW",
     "center_lat": -32.83104,
     "center_lng": 150.241728,
-    "name": "New South Wales"
+    "name": "New South Wales",
+    "tags": ["Australia", "NSW"]
   },
   {
     "id": 316,
     "region": "AU-QLD",
     "center_lat": -19.160024,
     "center_lng": 145.774064,
-    "name": "Queensland"
+    "name": "Queensland",
+    "tags": ["Australia", "QLD"]
   },
   {
     "id": 317,
     "region": "AU-SA",
     "center_lat": -32.028817,
     "center_lng": 135.002146,
-    "name": "South Australia"
+    "name": "South Australia",
+    "tags": ["Australia", "SA"]
   },
   {
     "id": 318,
     "region": "AU-TAS",
     "center_lat": -41.472139,
     "center_lng": 146.158811,
-    "name": "Tasmania"
+    "name": "Tasmania",
+    "tags": ["Australia", "TAS"]
   },
   {
     "id": 319,
     "region": "AU-VIC",
     "center_lat": -36.569808,
     "center_lng": 145.46918,
-    "name": "Victoria"
+    "name": "Victoria",
+    "tags": ["Australia", "VIC"]
   },
   {
     "id": 320,
     "region": "AU-WA",
     "center_lat": -24.412167,
     "center_lng": 120.961522,
-    "name": "Western Australia"
+    "name": "Western Australia",
+    "tags": ["Australia", "WA"]
   },
   {
     "id": 321,
     "region": "AU-ACT",
     "center_lat": -35.524073,
     "center_lng": 149.079834,
-    "name": "Australian Capital Territory"
+    "name": "Australian Capital Territory",
+    "tags": ["Australia", "ACT"]
   },
   {
     "id": 322,
     "region": "AU-NT",
     "center_lat": -18.482698,
     "center_lng": 133.500819,
-    "name": "Northern Territory"
+    "name": "Northern Territory",
+    "tags": ["Australia", "NT"]
   }
 ]
