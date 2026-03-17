@@ -7,6 +7,7 @@ The eBird Basic Dataset (EBD) Aggregator is a bunch of scripts to aggregate the 
 - Python 3.8+
 - aria2c (for downloading): `brew install aria2`
 - pigz (for fast decompression): `brew install pigz`
+- pv (for upload progress): `brew install pv`
 
 ## Setup
 

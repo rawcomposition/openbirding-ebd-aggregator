@@ -6,10 +6,12 @@ Uses DuckDB to efficiently process large TSV files (100+ GB) without loading
 them entirely into memory.
 
 Usage:
-    python generate_data.py <species_file> <sampling_file> <output.db>
+    python generate_data.py <species_file> <sampling_file> <output.db> \
+        --version-year <year> --version-month <month>
 
 Example:
-    python generate_data.py ebd_filtered.tsv sampling_filtered.tsv ebird.db
+    python generate_data.py ebd_filtered.tsv sampling_filtered.tsv ebird.db \
+        --version-year 2025 --version-month Feb
 
 For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
@@ -78,8 +80,8 @@ def build_database(
     species_file: Path,
     sampling_file: Path,
     output_db: Path,
-    version_year: int,
-    version_month: int,
+    version_year: str,
+    version_month: str,
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
@@ -418,17 +420,24 @@ def build_database(
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Writing metadata...")
     step_start = time.time()
+    version = f"{version_month.lower()}-{version_year}"
     sqlite_con = sqlite3.connect(output_db)
     sqlite_con.execute("""
         CREATE TABLE metadata (
-            version_year INTEGER NOT NULL,
-            version_month INTEGER NOT NULL,
+            version TEXT NOT NULL,
+            version_year TEXT NOT NULL,
+            version_month TEXT NOT NULL,
             generated_at TEXT NOT NULL
         )
     """)
     sqlite_con.execute(
-        "INSERT INTO metadata (version_year, version_month, generated_at) VALUES (?, ?, ?)",
-        (version_year, version_month, datetime.now(timezone.utc).isoformat()),
+        "INSERT INTO metadata (version, version_year, version_month, generated_at) VALUES (?, ?, ?, ?)",
+        (
+            version,
+            version_year,
+            version_month,
+            datetime.now(timezone.utc).isoformat(),
+        ),
     )
     sqlite_con.commit()
     sqlite_con.close()
@@ -454,10 +463,12 @@ def main():
         epilog="""
 Examples:
   # Basic usage
-  python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db
+  python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db \
+      --version-year 2025 --version-month Feb
 
   # Large dataset with memory and temp directory settings
   python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db \\
+      --version-year 2025 --version-month Feb \\
       --memory-limit 24GB --threads 8
         """,
     )
@@ -499,15 +510,15 @@ Examples:
     )
     parser.add_argument(
         "--version-year",
-        type=int,
+        type=str,
         required=True,
         help="Year of the eBird data version (e.g., 2025)",
     )
     parser.add_argument(
         "--version-month",
-        type=int,
+        type=str,
         required=True,
-        help="Month of the eBird data version (e.g., 6)",
+        help="Month of the eBird data version (e.g., Feb)",
     )
 
     args = parser.parse_args()

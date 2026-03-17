@@ -118,6 +118,9 @@ def get_file_paths(
         ),
         # Output
         "db": outputs_dir / f"targets-{month_lower}-{year}.db",
+        # Version info
+        "month_abbrev": month_abbrev,
+        "year": year,
         # Directories (for convenience)
         "datasets_dir": datasets_dir,
         "outputs_dir": outputs_dir,
@@ -539,6 +542,8 @@ def run_build_db(paths: dict, env_vars: dict) -> bool:
         "--memory-limit", f"{memory_limit}GB",
         "--threads", threads,
         "--wilson-z", wilson_z,
+        "--version-year", paths["year"],
+        "--version-month", paths["month_abbrev"],
     ]
 
     try:
@@ -711,7 +716,7 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     sys.stdout.flush()
 
     cmd = (
-        f"pv {db_file} | ssh {ssh_user}@{ssh_host} "
+        f"pv \"{db_file}\" | ssh {ssh_user}@{ssh_host} "
         f"\"docker run --rm -i -v {docker_volume}:/data alpine "
         f"sh -c 'cat > /data/targets.db'\""
     )
