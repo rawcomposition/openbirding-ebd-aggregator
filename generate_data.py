@@ -18,6 +18,7 @@ For very large files (100+ GB), you may want to:
 """
 
 import argparse
+from datetime import datetime, timezone
 import sqlite3
 import sys
 import time
@@ -77,6 +78,8 @@ def build_database(
     species_file: Path,
     sampling_file: Path,
     output_db: Path,
+    version_year: int,
+    version_month: int,
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
@@ -118,7 +121,7 @@ def build_database(
     if threads:
         print(f"Threads: {threads}")
 
-    total_steps = 8
+    total_steps = 9
     step_num = 0
 
     # Step 1: Download taxonomy
@@ -411,6 +414,26 @@ def build_database(
 
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
+    # Step 9: Create metadata table
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Writing metadata...")
+    step_start = time.time()
+    sqlite_con = sqlite3.connect(output_db)
+    sqlite_con.execute("""
+        CREATE TABLE metadata (
+            version_year INTEGER NOT NULL,
+            version_month INTEGER NOT NULL,
+            generated_at TEXT NOT NULL
+        )
+    """)
+    sqlite_con.execute(
+        "INSERT INTO metadata (version_year, version_month, generated_at) VALUES (?, ?, ?)",
+        (version_year, version_month, datetime.now(timezone.utc).isoformat()),
+    )
+    sqlite_con.commit()
+    sqlite_con.close()
+    print(f"  Done ({format_duration(time.time() - step_start)})")
+
     # Summary
     total_time = time.time() - start_time
     print("\n" + "=" * 50)
@@ -474,6 +497,18 @@ Examples:
         default=1.96,
         help="Z-index for Wilson score calculation (default: 1.96 for 95%% confidence)",
     )
+    parser.add_argument(
+        "--version-year",
+        type=int,
+        required=True,
+        help="Year of the eBird data version (e.g., 2025)",
+    )
+    parser.add_argument(
+        "--version-month",
+        type=int,
+        required=True,
+        help="Month of the eBird data version (e.g., 6)",
+    )
 
     args = parser.parse_args()
 
@@ -493,6 +528,8 @@ Examples:
         args.species_file,
         args.sampling_file,
         args.output_db,
+        version_year=args.version_year,
+        version_month=args.version_month,
         temp_dir=args.temp_dir,
         memory_limit=args.memory_limit,
         threads=args.threads,
