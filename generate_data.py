@@ -21,6 +21,8 @@ For very large files (100+ GB), you may want to:
 
 import argparse
 from datetime import datetime, timezone
+import os
+import shutil
 import sqlite3
 import sys
 import time
@@ -31,6 +33,77 @@ import duckdb
 import requests
 
 from utils import format_duration
+
+
+KiB = 1024
+MiB = 1024 * KiB
+GiB = 1024 * MiB
+
+# Use larger pages so the final DB stays smaller.
+SQLITE_BUILD_PAGE_SIZE = 16 * KiB
+
+# Let SQLite read part of the file more efficiently (build time only).
+SQLITE_BUILD_MMAP_SIZE = 1 * GiB
+
+# Keep the build cache from being too small (build time only).
+SQLITE_BUILD_CACHE_MIN_BYTES = 512 * MiB
+
+# Keep the build cache from growing too large (build time only).
+SQLITE_BUILD_CACHE_MAX_BYTES = 4 * GiB
+
+# Leave free disk so temp files do not fill the drive (build time only).
+DUCKDB_TEMP_HEADROOM_BYTES = 4 * GiB
+
+
+def get_duckdb_max_temp_directory_size(temp_directory: Path) -> Optional[str]:
+    """Reserve some free space while still allowing large spill-heavy queries."""
+    try:
+        free_bytes = shutil.disk_usage(temp_directory).free
+    except OSError:
+        return None
+
+    if free_bytes <= DUCKDB_TEMP_HEADROOM_BYTES:
+        return None
+
+    max_gib = (free_bytes - DUCKDB_TEMP_HEADROOM_BYTES) // (1024 ** 3)
+    if max_gib <= 0:
+        return None
+    return f"{max_gib}GiB"
+
+
+def get_sqlite_build_cache_kib() -> int:
+    """Choose an aggressive but bounded SQLite cache size for scratch builds."""
+    try:
+        total_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        target_bytes = total_bytes // 8
+    except (AttributeError, OSError, ValueError):
+        target_bytes = 1024 * 1024 * 1024
+
+    target_bytes = max(SQLITE_BUILD_CACHE_MIN_BYTES, target_bytes)
+    target_bytes = min(SQLITE_BUILD_CACHE_MAX_BYTES, target_bytes)
+    return target_bytes // 1024
+
+
+def open_sqlite_build_connection(
+    db_path: Path,
+    initialize_page_size: bool = False,
+) -> sqlite3.Connection:
+    """
+    Open a SQLite connection with aggressive build-time settings.
+
+    The database is scratch-built from source data, so we can trade crash
+    durability for faster bulk writes.
+    """
+    sqlite_con = sqlite3.connect(db_path)
+    if initialize_page_size:
+        sqlite_con.execute(f"PRAGMA page_size = {SQLITE_BUILD_PAGE_SIZE}")
+    sqlite_con.execute("PRAGMA journal_mode = MEMORY")
+    sqlite_con.execute("PRAGMA synchronous = OFF")
+    sqlite_con.execute("PRAGMA locking_mode = EXCLUSIVE")
+    sqlite_con.execute("PRAGMA temp_store = MEMORY")
+    sqlite_con.execute(f"PRAGMA cache_size = -{get_sqlite_build_cache_kib()}")
+    sqlite_con.execute(f"PRAGMA mmap_size = {SQLITE_BUILD_MMAP_SIZE}")
+    return sqlite_con
 
 
 def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
@@ -99,8 +172,9 @@ def build_database(
 
     # Configure DuckDB for large file processing
     config = {}
-    if temp_dir:
-        config["temp_directory"] = str(temp_dir)
+    duckdb_temp_dir = temp_dir.resolve() if temp_dir else (Path.cwd() / ".tmp").resolve()
+    duckdb_temp_dir.mkdir(parents=True, exist_ok=True)
+    config["temp_directory"] = str(duckdb_temp_dir)
     if threads:
         config["threads"] = threads
 
@@ -109,6 +183,10 @@ def build_database(
     # Set memory limit if specified
     if memory_limit:
         con.execute(f"SET memory_limit = '{memory_limit}'")
+    con.execute("SET preserve_insertion_order = false")
+    max_temp_directory_size = get_duckdb_max_temp_directory_size(duckdb_temp_dir)
+    if max_temp_directory_size:
+        con.execute(f"SET max_temp_directory_size = '{max_temp_directory_size}'")
 
     # Install and load SQLite extension for direct export
     con.execute("INSTALL sqlite; LOAD sqlite;")
@@ -116,42 +194,48 @@ def build_database(
     print(f"Processing species file: {species_file}")
     print(f"Processing sampling file: {sampling_file}")
     print(f"Output database: {output_db}")
-    if temp_dir:
-        print(f"Temp directory: {temp_dir}")
+    print(f"Temp directory: {duckdb_temp_dir}")
     if memory_limit:
         print(f"Memory limit: {memory_limit}")
     if threads:
         print(f"Threads: {threads}")
 
-    total_steps = 9
+    total_steps = 8
     step_num = 0
+    initialize_page_size = not output_db.exists() or output_db.stat().st_size == 0
 
     # Step 1: Download taxonomy
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Downloading eBird taxonomy...")
     step_start = time.time()
-    sqlite_con = sqlite3.connect(output_db)
+    sqlite_con = open_sqlite_build_connection(
+        output_db,
+        initialize_page_size=initialize_page_size,
+    )
     taxonomy_count = download_taxonomy(sqlite_con)
     sqlite_con.close()
     print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
 
-    # Attach SQLite database for output
-    con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
-
-    # Create staging table for fast inserts (no constraints)
-    con.execute("DROP TABLE IF EXISTS sqlite_db.month_obs_staging")
-    con.execute("DROP TABLE IF EXISTS sqlite_db.month_obs")
-
-    con.execute("""
-        CREATE TABLE sqlite_db.month_obs_staging (
+    # Create the final month_obs table up front so DuckDB can insert rows in
+    # primary-key order directly into the compact WITHOUT ROWID layout.
+    sqlite_con = open_sqlite_build_connection(output_db)
+    sqlite_con.execute("DROP TABLE IF EXISTS month_obs")
+    sqlite_con.execute("""
+        CREATE TABLE month_obs (
             location_id TEXT NOT NULL,
             month INTEGER NOT NULL,
             species_id INTEGER NOT NULL,
             obs INTEGER NOT NULL,
             samples INTEGER NOT NULL,
-            score REAL NOT NULL
-        )
+            score REAL NOT NULL,
+            PRIMARY KEY (location_id, month, species_id)
+        ) WITHOUT ROWID
     """)
+    sqlite_con.commit()
+    sqlite_con.close()
+
+    # Attach SQLite database for output
+    con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
 
     # Step 2: Calculate samples per (location, month) and (location, year) from sampling file
     step_num += 1
@@ -192,7 +276,7 @@ def build_database(
         SELECT
             o.location_id,
             o.month,
-            o.scientific_name,
+            sp.id AS species_id,
             o.obs,
             s.samples
         FROM (
@@ -210,40 +294,36 @@ def build_database(
             )
             GROUP BY location_id, month, scientific_name
         ) o
+        JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
         JOIN samples_agg s
             ON o.location_id = s.location_id
             AND o.month = s.month
     """)
+    month_obs_count = con.execute("SELECT COUNT(*) FROM observations_agg").fetchone()[0]
+    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM observations_agg").fetchone()[0]
+    species_count = con.execute("SELECT COUNT(DISTINCT species_id) FROM observations_agg").fetchone()[0]
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 4: Insert into SQLite by month for progress tracking
-    # Join with species table to get species_id
+    # Step 4: Insert month_obs directly into the final WITHOUT ROWID table.
+    # Ordering by the primary key dramatically reduces SQLite B-tree churn.
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Inserting month_obs into SQLite...")
     step_start = time.time()
-    total_rows = 0
-    for month in range(1, 13):
-        month_start = time.time()
-        con.execute(f"""
-            INSERT INTO sqlite_db.month_obs_staging (location_id, month, species_id, obs, samples, score)
-            SELECT
-                o.location_id,
-                o.month,
-                sp.id,
-                o.obs,
-                o.samples,
-                -- Wilson score lower bound (z={wilson_z})
-                (o.obs + {z_sq_half} - {wilson_z} * sqrt(o.obs * (o.samples - o.obs) / o.samples + {z_sq_quarter}))
-                    / (o.samples + {z_sq}) AS score
-            FROM observations_agg o
-            JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
-            WHERE o.month = {month}
-        """)
-        month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_obs_staging WHERE month = {month}").fetchone()[0]
-        total_rows += month_count
-        if month_count > 0:
-            print(f"  Month {month:2d}: {month_count:,} rows ({format_duration(time.time() - month_start)})")
-    print(f"  Total: {total_rows:,} rows ({format_duration(time.time() - step_start)})")
+    con.execute(f"""
+        INSERT INTO sqlite_db.month_obs (location_id, month, species_id, obs, samples, score)
+        SELECT
+            o.location_id,
+            o.month,
+            o.species_id,
+            o.obs,
+            o.samples,
+            -- Wilson score lower bound (z={wilson_z})
+            (o.obs + {z_sq_half} - {wilson_z} * sqrt(o.obs * (o.samples - o.obs) / o.samples + {z_sq_quarter}))
+                / (o.samples + {z_sq}) AS score
+        FROM observations_agg o
+        ORDER BY o.location_id, o.month, o.species_id
+    """)
+    print(f"  Inserted {month_obs_count:,} rows ({format_duration(time.time() - step_start)})")
 
     # Step 5: Create and populate year_obs table
     # Aggregate from observations_agg (not month_obs) to avoid losing data filtered at month level
@@ -275,11 +355,10 @@ def build_database(
         FROM (
             SELECT
                 o.location_id,
-                sp.id AS species_id,
+                o.species_id,
                 SUM(o.obs) AS obs
             FROM observations_agg o
-            JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
-            GROUP BY o.location_id, sp.id
+            GROUP BY o.location_id, o.species_id
         ) agg
         JOIN year_samples_agg ys ON agg.location_id = ys.location_id
     """)
@@ -350,52 +429,12 @@ def build_database(
     hotspot_count = con.execute("SELECT COUNT(*) FROM sqlite_db.hotspots").fetchone()[0]
     print(f"  Extracted {hotspot_count:,} locations ({format_duration(time.time() - step_start)})")
 
-    # Get summary statistics from DuckDB before closing
-    obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs_staging").fetchone()[0]
-    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_obs_staging").fetchone()[0]
-    species_count = con.execute("SELECT COUNT(DISTINCT species_id) FROM sqlite_db.month_obs_staging").fetchone()[0]
-
     con.close()
 
-    # Step 7: Convert staging table to WITHOUT ROWID table with PRIMARY KEY
-    step_num += 1
-    print(f"\nStep {step_num}/{total_steps}: Converting month_obs to WITHOUT ROWID table...")
-    step_start = time.time()
-
-    sqlite_con = sqlite3.connect(output_db)
-
-    # Create the final WITHOUT ROWID table with PRIMARY KEY
-    sqlite_con.execute("""
-        CREATE TABLE month_obs (
-            location_id TEXT NOT NULL,
-            month INTEGER NOT NULL,
-            species_id INTEGER NOT NULL,
-            obs INTEGER NOT NULL,
-            samples INTEGER NOT NULL,
-            score REAL NOT NULL,
-            PRIMARY KEY (location_id, month, species_id)
-        ) WITHOUT ROWID
-    """)
-
-    # Copy data from staging table (SQLite builds the B-tree efficiently in one pass)
-    sqlite_con.execute("""
-        INSERT INTO month_obs (location_id, month, species_id, obs, samples, score)
-        SELECT location_id, month, species_id, obs, samples, score
-        FROM month_obs_staging
-    """)
-
-    # Drop the staging table
-    sqlite_con.execute("DROP TABLE month_obs_staging")
-    sqlite_con.commit()
-    sqlite_con.close()
-
-    print(f"  Done ({format_duration(time.time() - step_start)})")
-
-    # Step 8: Create indexes using sqlite3
+    # Step 7: Create indexes using sqlite3
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating indexes...")
     step_start = time.time()
-
     indexes = [
         # Species-based queries (sorted by score)
         "CREATE INDEX IF NOT EXISTS idx_mo_species_score ON month_obs(species_id, score DESC)",
@@ -408,7 +447,7 @@ def build_database(
         # Note: location-based queries for month_obs are covered by the PRIMARY KEY and WITHOUT ROWID optimizations
     ]
 
-    sqlite_con = sqlite3.connect(output_db)
+    sqlite_con = open_sqlite_build_connection(output_db)
     for index_sql in indexes:
         sqlite_con.execute(index_sql)
     sqlite_con.commit()
@@ -416,12 +455,13 @@ def build_database(
 
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 9: Create metadata table
+    # Step 8: Create metadata table
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Writing metadata...")
     step_start = time.time()
     version = f"{version_month.lower()}-{version_year}"
-    sqlite_con = sqlite3.connect(output_db)
+    sqlite_con = open_sqlite_build_connection(output_db)
+    sqlite_con.execute("DROP TABLE IF EXISTS metadata")
     sqlite_con.execute("""
         CREATE TABLE metadata (
             version TEXT NOT NULL,
@@ -447,7 +487,7 @@ def build_database(
     total_time = time.time() - start_time
     print("\n" + "=" * 50)
     print("Summary:")
-    print(f"  Total month_obs rows: {obs_count:,}")
+    print(f"  Total month_obs rows: {month_obs_count:,}")
     print(f"  Total year_obs rows: {year_obs_count:,}")
     print(f"  Total locations: {loc_count:,}")
     print(f"  Unique species: {species_count:,}")

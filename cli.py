@@ -265,6 +265,7 @@ def run_extract(paths: dict) -> bool:
         extracted_file = datasets_dir / f"{ebird_release}.txt.gz"
         if extracted_file.exists():
             extracted_file.rename(txt_gz_file)
+            tar_file.unlink()
             print(f"Extracted and renamed to: {txt_gz_file}")
         else:
             print(f"Warning: Expected file not found: {extracted_file}")
@@ -429,6 +430,7 @@ def run_extract_sampling(paths: dict) -> bool:
         extracted_file = datasets_dir / f"{sampling_release}.txt.gz"
         if extracted_file.exists():
             extracted_file.rename(txt_gz_file)
+            tar_file.unlink()
             print(f"Extracted and renamed to: {txt_gz_file}")
         else:
             print(f"Warning: Expected file not found: {extracted_file}")

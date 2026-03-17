@@ -18,6 +18,8 @@ from utils import load_env_file, format_size
 
 # Cache control headers
 CACHE_INDEX = "public, max-age=7200"  # 2 hours for packs.json.gz
+# Cloudflare Browser Cache TTL will override this if set to a value > ours
+
 CACHE_PACKS = "public, max-age=31536000"  # 1 year for versioned packs
 
 

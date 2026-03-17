@@ -349,10 +349,10 @@ def generate_pack(
         print("  Skipping - no hotspots")
         return None
 
-    # Query month_obs from database
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode = WAL")
+    # Query month_obs from a read-only connection.
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+    conn.execute("PRAGMA query_only = ON")
 
     cursor = conn.execute("""
         SELECT location_id, month, species_id, obs, samples
