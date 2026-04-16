@@ -9,6 +9,7 @@ Usage:
     python cli.py
 """
 
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -775,9 +776,35 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
         return False
 
 
+def check_disk_space(path: Path, min_gb: float) -> bool:
+    """
+    Check that `path` (or its nearest existing parent) has at least `min_gb`
+    GB of free disk space. Returns True if sufficient, False otherwise.
+    """
+    check_path = path
+    while not check_path.exists():
+        check_path = check_path.parent
+
+    available_gb = shutil.disk_usage(check_path).free / (1024 ** 3)
+
+    if available_gb < min_gb:
+        print(
+            f"\nError: Insufficient disk space at {check_path}. "
+            f"Need {min_gb:.0f} GB, but only {available_gb:.1f} GB available."
+        )
+        return False
+
+    print(
+        f"Disk space check: {available_gb:.1f} GB available "
+        f"(minimum: {min_gb:.0f} GB) at {check_path}"
+    )
+    return True
+
+
 def run_all_steps(
     paths: dict,
     env_vars: dict,
+    datasets_dir: Path,
     packs_dir: Path,
     pack_version: str,
 ) -> bool:
@@ -786,6 +813,10 @@ def run_all_steps(
     Returns True if all steps succeed, exits on failure.
     """
     print("\nRunning all steps...")
+
+    min_disk_gb = env_vars.get("MIN_DISK_SPACE_GB")
+    if min_disk_gb and not check_disk_space(datasets_dir, float(min_disk_gb)):
+        sys.exit(1)
 
     steps = [
         (run_download, "Download species dataset failed."),
@@ -874,7 +905,7 @@ def main():
     elif op_idx == 7:
         success = run_generate_packs(paths, env_vars, packs_dir)
     elif op_idx == 8:
-        success = run_all_steps(paths, env_vars, packs_dir, pack_version)
+        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
     elif op_idx == 9:
         success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
     elif op_idx == 10:
