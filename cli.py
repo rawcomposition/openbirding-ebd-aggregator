@@ -320,6 +320,12 @@ def run_filter(paths: dict) -> bool:
             check=True,
         )
         print("\nFiltering complete!")
+
+        # Free up disk space: the gzipped source is no longer needed now that
+        # the filtered version exists.
+        txt_gz_file.unlink()
+        print(f"Deleted original dataset: {txt_gz_file}")
+
         return True
     except subprocess.CalledProcessError as e:
         print(f"\nFiltering failed: {e}")
@@ -485,6 +491,12 @@ def run_filter_sampling(paths: dict) -> bool:
             check=True,
         )
         print("\nFiltering complete!")
+
+        # Free up disk space: the gzipped source is no longer needed now that
+        # the filtered version exists.
+        txt_gz_file.unlink()
+        print(f"Deleted original dataset: {txt_gz_file}")
+
         return True
     except subprocess.CalledProcessError as e:
         print(f"\nFiltering failed: {e}")
