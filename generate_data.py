@@ -232,6 +232,17 @@ def build_database(
             PRIMARY KEY (location_id, month, species_id)
         ) WITHOUT ROWID
     """)
+    sqlite_con.execute("DROP TABLE IF EXISTS year_obs")
+    sqlite_con.execute("""
+        CREATE TABLE year_obs (
+            location_id TEXT NOT NULL,
+            species_id INTEGER NOT NULL,
+            obs INTEGER NOT NULL,
+            samples INTEGER NOT NULL,
+            score REAL NOT NULL,
+            PRIMARY KEY (location_id, species_id)
+        ) WITHOUT ROWID
+    """)
     sqlite_con.execute("DROP TABLE IF EXISTS region_month_obs")
     sqlite_con.execute("""
         CREATE TABLE region_month_obs (
@@ -449,17 +460,6 @@ def build_database(
     print(f"\nStep {step_num}/{total_steps}: Creating year_obs table...")
     step_start = time.time()
 
-    con.execute("DROP TABLE IF EXISTS sqlite_db.year_obs")
-    con.execute("""
-        CREATE TABLE sqlite_db.year_obs (
-            location_id TEXT NOT NULL,
-            species_id INTEGER NOT NULL,
-            obs INTEGER NOT NULL,
-            samples INTEGER NOT NULL,
-            score REAL NOT NULL
-        )
-    """)
-
     con.execute(f"""
         INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples, score)
         SELECT
@@ -479,6 +479,7 @@ def build_database(
             GROUP BY o.location_id, o.species_id
         ) agg
         JOIN year_samples_agg ys ON agg.location_id = ys.location_id
+        ORDER BY agg.location_id, agg.species_id
     """)
 
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]

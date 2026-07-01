@@ -49,9 +49,6 @@ class EBirdHotspot:
     lat: float
     lng: float
     total: int
-    country_code: str
-    subnational1_code: str
-    subnational2_code: str
 
 
 @dataclass
@@ -202,13 +199,6 @@ def load_packs() -> list[PackEntry]:
     ]
 
 
-def fetch_regions() -> dict[str, str]:
-    """Fetch region names from OpenBirding API."""
-    response = requests.get("http://api.openbirding.org/api/v1/regions", timeout=30)
-    response.raise_for_status()
-    return response.json()
-
-
 def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
     """Fetch hotspots for a region from eBird API."""
     url = f"https://api.ebird.org/v2/ref/hotspot/{region}?fmt=json&key={api_key}"
@@ -231,9 +221,6 @@ def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
             lat=h['lat'],
             lng=h['lng'],
             total=h.get('numSpeciesAllTime', 0),
-            country_code=h.get('countryCode', ''),
-            subnational1_code=h.get('subnational1Code', ''),
-            subnational2_code=h.get('subnational2Code', ''),
         ))
 
     return hotspots
@@ -267,10 +254,7 @@ def build_month_obs_map(rows: list[tuple]) -> dict:
     return obs_by_location
 
 
-def build_pack_hotspots(
-    ebird_hotspots: list[EBirdHotspot],
-    region_names: dict[str, str]
-) -> list[dict]:
+def build_pack_hotspots(ebird_hotspots: list[EBirdHotspot]) -> list[dict]:
     """Build pack hotspots array from eBird hotspots."""
     pack_hotspots = []
 
@@ -281,12 +265,6 @@ def build_pack_hotspots(
             'species': h.total,
             'lat': h.lat,
             'lng': h.lng,
-            'country': h.country_code,
-            'state': h.subnational1_code or None,
-            'county': h.subnational2_code or None,
-            'countryName': region_names.get(h.country_code, h.country_code),
-            'stateName': region_names.get(h.subnational1_code) if h.subnational1_code else None,
-            'countyName': region_names.get(h.subnational2_code) if h.subnational2_code else None,
         })
 
     return pack_hotspots
@@ -316,12 +294,90 @@ def build_pack_targets(
     return pack_targets
 
 
+def build_pack_cells(
+    conn: sqlite3.Connection,
+    region: str,
+    species_by_id: dict[int, str]
+) -> Optional[tuple[int, list[dict]]]:
+    """
+    Build the H3 cell grid for a region from the folded h3_* tables.
+
+    Returns (res, cells) where each cell is one row, mirroring the hotspot
+    targets shape:
+        {"h3": <hex string>, "samples": [12 ints], "species": [[code, o1..o12], ...]}
+    Cells are selected by their winning region (h3_cells.region_code), matching
+    the prefix rule used for region packs. Returns None if the database has no
+    h3 tables (i.e. the Build H3 step has not been run).
+    """
+    has_h3 = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='h3_cells'"
+    ).fetchone()
+    if not has_h3:
+        return None
+
+    res_row = conn.execute("SELECT res FROM h3_metadata LIMIT 1").fetchone()
+    res = res_row[0] if res_row else None
+
+    ref_filter = (
+        "cell_ref IN (SELECT cell_ref FROM h3_cells "
+        "WHERE region_code = ? OR region_code LIKE ? || '-%')"
+    )
+    samp_rows = conn.execute(
+        f"SELECT c.h3, s.month, s.samples FROM h3_cell_samples s "
+        f"JOIN h3_cells c ON c.cell_ref = s.cell_ref WHERE s.{ref_filter} "
+        f"ORDER BY c.h3, s.month",
+        (region, region),
+    ).fetchall()
+    obs_rows = conn.execute(
+        f"SELECT c.h3, o.species_id, o.month, o.obs FROM h3_cell_obs o "
+        f"JOIN h3_cells c ON c.cell_ref = o.cell_ref WHERE o.{ref_filter} "
+        f"ORDER BY c.h3, o.species_id, o.month",
+        (region, region),
+    ).fetchall()
+
+    samples_by_cell: dict[int, list[int]] = {}
+    for h3, month, samples in samp_rows:
+        arr = samples_by_cell.get(h3)
+        if arr is None:
+            arr = [0] * 12
+            samples_by_cell[h3] = arr
+        arr[month - 1] = samples
+
+    # obs_rows arrive ordered by (h3, species_id, month), so stream them.
+    species_by_cell: dict[int, list[tuple]] = {}
+    cur_h3 = cur_list = cur_sp = cur_obs = None
+    for h3, species_id, month, obs in obs_rows:
+        if h3 != cur_h3:
+            cur_h3 = h3
+            cur_list = []
+            species_by_cell[h3] = cur_list
+            cur_sp = None
+        if species_id != cur_sp:
+            cur_sp = species_id
+            cur_obs = [0] * 12
+            cur_list.append((species_id, cur_obs))
+        cur_obs[month - 1] = obs
+
+    cells = []
+    for h3 in sorted(set(samples_by_cell) | set(species_by_cell)):
+        species_array = []
+        for species_id, obs_array in species_by_cell.get(h3, []):
+            code = species_by_id.get(species_id)
+            if code:
+                species_array.append([code] + obs_array)
+        cells.append({
+            'h3': format(h3 & 0xFFFFFFFFFFFFFFFF, 'x'),
+            'samples': samples_by_cell.get(h3, [0] * 12),
+            'species': species_array,
+        })
+    return res, cells
+
+
 def generate_pack(
     pack: PackEntry,
     db_path: Path,
     output_dir: Path,
     species_by_id: dict[int, str],
-    region_names: dict[str, str],
     api_key: str,
     pack_version: str,
     base_url: str,
@@ -356,15 +412,18 @@ def generate_pack(
         WHERE location_id IN (SELECT id FROM hotspots WHERE region_code LIKE ? || '%')
     """, (pack.region,))
     month_obs_rows = cursor.fetchall()
+    h3_result = build_pack_cells(conn, pack.region, species_by_id)
     conn.close()
 
     print(f"  Found {len(month_obs_rows)} month_obs rows in database")
+    if h3_result is not None:
+        print(f"  Found {len(h3_result[1])} h3 cells in database")
 
     # Build observation data structure
     obs_by_location = build_month_obs_map(month_obs_rows)
 
     # Build pack hotspots
-    pack_hotspots = build_pack_hotspots(ebird_hotspots, region_names)
+    pack_hotspots = build_pack_hotspots(ebird_hotspots)
 
     # Build pack targets
     pack_targets = build_pack_targets(obs_by_location, species_by_id)
@@ -377,6 +436,9 @@ def generate_pack(
         'hotspots': pack_hotspots,
         'targets': pack_targets,
     }
+    if h3_result is not None:
+        pack_data['h3res'] = h3_result[0]
+        pack_data['cells'] = h3_result[1]
 
     # Write gzipped JSON to versioned subdirectory
     version_dir = output_dir / pack_version
@@ -418,8 +480,12 @@ def generate_pack(
 def main():
     parser = argparse.ArgumentParser(description="Generate compressed JSON pack files for each region")
     parser.add_argument("db_path", type=Path, help="Path to targets SQLite database")
-    parser.add_argument("--region", type=str, help="Generate pack for a single region only")
+    parser.add_argument("--regions", type=str, nargs="+", help="Generate packs for specific regions only")
     parser.add_argument("--output-dir", type=Path, help="Output directory for pack files")
+    parser.add_argument(
+        "--beta", action="store_true",
+        help="Build a beta pack (fixed 'beta' version, doesn't overwrite the production release)"
+    )
     args = parser.parse_args()
 
     # Load environment variables
@@ -443,16 +509,23 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Derive pack version from database filename (e.g., "targets-dec-2025.db" -> "dec-2025")
-    db_name = args.db_path.stem
-    if db_name.startswith("targets-"):
-        pack_version = db_name.replace("targets-", "")
+    if args.beta:
+        # Beta packs always use a fixed version so repeated builds overwrite
+        # in place instead of accumulating a new version per run.
+        pack_version = "beta"
     else:
-        pack_version = db_name
+        # Derive pack version from database filename (e.g., "targets-dec-2025.db" -> "dec-2025")
+        db_name = args.db_path.stem
+        if db_name.startswith("targets-"):
+            pack_version = db_name.replace("targets-", "")
+        else:
+            pack_version = db_name
 
     # Build base URL for pack files
     s3_public_url = env_vars.get("S3_PUBLIC_URL", "")
     s3_dir = env_vars.get("S3_DIR", "")
+    if args.beta:
+        s3_dir = f"{s3_dir}/beta" if s3_dir else "beta"
     if s3_public_url:
         # Ensure URL ends with /
         if not s3_public_url.endswith("/"):
@@ -486,48 +559,32 @@ def main():
     conn.close()
     print(f"Loaded {len(species_by_id)} species")
 
-    # Fetch region names from API
-    print("Fetching region names from OpenBirding API...")
-    try:
-        region_names = fetch_regions()
-        print(f"Loaded {len(region_names)} region names")
-    except Exception as e:
-        print(f"Warning: Could not fetch region names: {e}")
-        region_names = {}
-
     start_time = time.time()
     pack_metadata_list = []
 
-    if args.region:
-        # Process single region
-        pack = next((p for p in packs if p.region == args.region), None)
-        if not pack:
-            print(f"\nError: Pack for region '{args.region}' not found.")
+    if args.regions:
+        packs_by_region = {p.region: p for p in packs}
+        missing = [r for r in args.regions if r not in packs_by_region]
+        if missing:
+            print(f"\nError: Pack(s) not found for region(s): {', '.join(missing)}")
             print(f"Available regions: {', '.join(p.region for p in packs)}")
             sys.exit(1)
+        packs = [packs_by_region[r] for r in args.regions]
 
-        metadata = generate_pack(
-            pack, args.db_path, output_dir, species_by_id, region_names,
-            api_key, pack_version, base_url, True, "1/1"
-        )
-        if metadata:
-            pack_metadata_list.append(metadata)
-    else:
-        # Process all packs
-        print(f"\nProcessing {len(packs)} packs...")
+    print(f"\nProcessing {len(packs)} packs...")
 
-        total_packs = len(packs)
-        for i, pack in enumerate(packs):
-            try:
-                metadata = generate_pack(
-                    pack, args.db_path, output_dir, species_by_id, region_names,
-                    api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}"
-                )
-                if metadata:
-                    pack_metadata_list.append(metadata)
-            except Exception as e:
-                print(f"\nError processing pack {pack.region}: {e}")
-                sys.exit(1)
+    total_packs = len(packs)
+    for i, pack in enumerate(packs):
+        try:
+            metadata = generate_pack(
+                pack, args.db_path, output_dir, species_by_id,
+                api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}"
+            )
+            if metadata:
+                pack_metadata_list.append(metadata)
+        except Exception as e:
+            print(f"\nError processing pack {pack.region}: {e}")
+            sys.exit(1)
 
     # Generate packs.json.gz index file
     if pack_metadata_list:

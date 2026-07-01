@@ -161,6 +161,11 @@ def main():
         type=str,
         help="Pack version (e.g., dec-2025)"
     )
+    parser.add_argument(
+        "--prefix",
+        type=str,
+        help="Override the S3 key prefix (defaults to S3_DIR from .env)"
+    )
     args = parser.parse_args()
 
     # Load environment variables
@@ -171,7 +176,7 @@ def main():
     s3_secret = env_vars.get("S3_SECRET")
     s3_bucket = env_vars.get("S3_BUCKET")
     s3_endpoint = env_vars.get("S3_ENDPOINT")
-    s3_dir = env_vars.get("S3_DIR", "")
+    s3_dir = args.prefix if args.prefix is not None else env_vars.get("S3_DIR", "")
 
     missing = []
     if not s3_key_id:

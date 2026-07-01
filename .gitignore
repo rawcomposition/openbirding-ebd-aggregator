@@ -8,3 +8,5 @@ ebd_filtered.tsv
 datasets/
 output/
 venv/
+__pycache__/
+*.pyc
