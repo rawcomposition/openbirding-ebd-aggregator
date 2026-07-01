@@ -49,6 +49,9 @@ class EBirdHotspot:
     lat: float
     lng: float
     total: int
+    country_code: str
+    subnational1_code: str
+    subnational2_code: str
 
 
 @dataclass
@@ -199,6 +202,13 @@ def load_packs() -> list[PackEntry]:
     ]
 
 
+def fetch_regions() -> dict[str, str]:
+    """Fetch region names from OpenBirding API."""
+    response = requests.get("http://api.openbirding.org/api/v1/regions", timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
 def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
     """Fetch hotspots for a region from eBird API."""
     url = f"https://api.ebird.org/v2/ref/hotspot/{region}?fmt=json&key={api_key}"
@@ -221,6 +231,9 @@ def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
             lat=h['lat'],
             lng=h['lng'],
             total=h.get('numSpeciesAllTime', 0),
+            country_code=h.get('countryCode', ''),
+            subnational1_code=h.get('subnational1Code', ''),
+            subnational2_code=h.get('subnational2Code', ''),
         ))
 
     return hotspots
@@ -254,7 +267,10 @@ def build_month_obs_map(rows: list[tuple]) -> dict:
     return obs_by_location
 
 
-def build_pack_hotspots(ebird_hotspots: list[EBirdHotspot]) -> list[dict]:
+def build_pack_hotspots(
+    ebird_hotspots: list[EBirdHotspot],
+    region_names: dict[str, str]
+) -> list[dict]:
     """Build pack hotspots array from eBird hotspots."""
     pack_hotspots = []
 
@@ -265,6 +281,12 @@ def build_pack_hotspots(ebird_hotspots: list[EBirdHotspot]) -> list[dict]:
             'species': h.total,
             'lat': h.lat,
             'lng': h.lng,
+            'country': h.country_code,
+            'state': h.subnational1_code or None,
+            'county': h.subnational2_code or None,
+            'countryName': region_names.get(h.country_code, h.country_code),
+            'stateName': region_names.get(h.subnational1_code) if h.subnational1_code else None,
+            'countyName': region_names.get(h.subnational2_code) if h.subnational2_code else None,
         })
 
     return pack_hotspots
@@ -378,6 +400,7 @@ def generate_pack(
     db_path: Path,
     output_dir: Path,
     species_by_id: dict[int, str],
+    region_names: dict[str, str],
     api_key: str,
     pack_version: str,
     base_url: str,
@@ -423,7 +446,7 @@ def generate_pack(
     obs_by_location = build_month_obs_map(month_obs_rows)
 
     # Build pack hotspots
-    pack_hotspots = build_pack_hotspots(ebird_hotspots)
+    pack_hotspots = build_pack_hotspots(ebird_hotspots, region_names)
 
     # Build pack targets
     pack_targets = build_pack_targets(obs_by_location, species_by_id)
@@ -559,6 +582,15 @@ def main():
     conn.close()
     print(f"Loaded {len(species_by_id)} species")
 
+    # Fetch region names from API
+    print("Fetching region names from OpenBirding API...")
+    try:
+        region_names = fetch_regions()
+        print(f"Loaded {len(region_names)} region names")
+    except Exception as e:
+        print(f"Warning: Could not fetch region names: {e}")
+        region_names = {}
+
     start_time = time.time()
     pack_metadata_list = []
 
@@ -577,7 +609,7 @@ def main():
     for i, pack in enumerate(packs):
         try:
             metadata = generate_pack(
-                pack, args.db_path, output_dir, species_by_id,
+                pack, args.db_path, output_dir, species_by_id, region_names,
                 api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}"
             )
             if metadata:
