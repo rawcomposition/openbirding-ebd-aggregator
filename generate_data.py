@@ -482,7 +482,20 @@ def build_database(
         ORDER BY agg.location_id, agg.species_id
     """)
 
-    year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
+    # Count from the source temp tables, mirroring the INSERT's FROM/JOIN.
+    # year_obs is WITHOUT ROWID, and DuckDB's SQLite scanner cannot read those
+    # back (it issues "SELECT ROWID FROM year_obs").
+    year_obs_count = con.execute("""
+        SELECT COUNT(*) FROM (
+            SELECT agg.location_id
+            FROM (
+                SELECT o.location_id, o.species_id
+                FROM hotspot_observations_agg o
+                GROUP BY o.location_id, o.species_id
+            ) agg
+            JOIN year_samples_agg ys ON agg.location_id = ys.location_id
+        )
+    """).fetchone()[0]
     print(f"  Created {year_obs_count:,} rows ({format_duration(time.time() - step_start)})")
 
     # Step 6: Create region tables for all complete checklists, including

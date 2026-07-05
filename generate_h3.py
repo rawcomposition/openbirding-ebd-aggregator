@@ -229,7 +229,9 @@ def prepare_h3_tables(target_db: Path) -> None:
         CREATE TABLE h3_cells (
             cell_ref INTEGER PRIMARY KEY,
             h3 INTEGER NOT NULL,
-            region_code TEXT
+            region_code TEXT,
+            lat REAL,
+            lng REAL
         )
         """
     )
@@ -405,7 +407,9 @@ def write_h3_tables(
         SELECT
             CAST(ROW_NUMBER() OVER (ORDER BY h3) AS BIGINT) AS cell_ref,
             h3,
-            region_code
+            region_code,
+            h3_cell_to_lat(h3) AS lat,
+            h3_cell_to_lng(h3) AS lng
         FROM (
             SELECT cell AS h3, region_code FROM (
                 SELECT cell, region_code,
@@ -419,8 +423,8 @@ def write_h3_tables(
     )
     con.execute(
         """
-        INSERT INTO tdb.h3_cells (cell_ref, h3, region_code)
-        SELECT cell_ref, h3, region_code FROM cell_dim ORDER BY cell_ref
+        INSERT INTO tdb.h3_cells (cell_ref, h3, region_code, lat, lng)
+        SELECT cell_ref, h3, region_code, lat, lng FROM cell_dim ORDER BY cell_ref
         """
     )
     con.execute(
@@ -463,6 +467,9 @@ def write_h3_tables(
     )
     # h3 -> cell_ref lookup for translating polygon cells at query time.
     sq.execute("CREATE UNIQUE INDEX idx_h3_cells_h3 ON h3_cells(h3)")
+    # Centre-point index for bounding-box queries: WHERE lat BETWEEN ? AND ?
+    # AND lng BETWEEN ? AND ?. Leading lat column bounds the scan by latitude.
+    sq.execute("CREATE INDEX idx_h3_cells_latlng ON h3_cells(lat, lng)")
     # ANALYZE just the new tables (no whole-db VACUUM -- targets db is large).
     sq.execute("ANALYZE h3_cells")
     sq.execute("ANALYZE h3_cell_obs")

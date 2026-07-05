@@ -326,10 +326,14 @@ def build_pack_cells(
 
     Returns (res, cells) where each cell is one row, mirroring the hotspot
     targets shape:
-        {"h3": <hex string>, "samples": [12 ints], "species": [[code, o1..o12], ...]}
-    Cells are selected by their winning region (h3_cells.region_code), matching
-    the prefix rule used for region packs. Returns None if the database has no
-    h3 tables (i.e. the Build H3 step has not been run).
+        {"id": <str>, "lat": <float>, "lng": <float>,
+         "samples": [12 ints], "species": [[code, o1..o12], ...]}
+    lat/lng are the cell centre, rounded to 3 decimal places (~111 m). The H3
+    index is emitted as a canonical lowercase hex string so it round-trips
+    safely through JSON/JavaScript. Cells are selected by their winning region
+    (h3_cells.region_code), matching the prefix rule used for region packs.
+    Returns None if the database has no h3 tables (i.e. the Build H3 step has
+    not been run).
     """
     has_h3 = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='h3_cells'"
@@ -356,6 +360,16 @@ def build_pack_cells(
         f"ORDER BY c.h3, o.species_id, o.month",
         (region, region),
     ).fetchall()
+
+    # Cell-centre coordinates, keyed by h3, for the region's cells.
+    coords_by_cell: dict[int, tuple] = {
+        h3: (lat, lng)
+        for h3, lat, lng in conn.execute(
+            "SELECT h3, lat, lng FROM h3_cells "
+            "WHERE region_code = ? OR region_code LIKE ? || '-%'",
+            (region, region),
+        ).fetchall()
+    }
 
     samples_by_cell: dict[int, list[int]] = {}
     for h3, month, samples in samp_rows:
@@ -387,8 +401,13 @@ def build_pack_cells(
             code = species_by_id.get(species_id)
             if code:
                 species_array.append([code] + obs_array)
+        coords = coords_by_cell.get(h3)
+        lat = round(coords[0], 3) if coords and coords[0] is not None else None
+        lng = round(coords[1], 3) if coords and coords[1] is not None else None
         cells.append({
-            'h3': format(h3 & 0xFFFFFFFFFFFFFFFF, 'x'),
+            'id': format(h3, 'x'),
+            'lat': lat,
+            'lng': lng,
             'samples': samples_by_cell.get(h3, [0] * 12),
             'species': species_array,
         })
