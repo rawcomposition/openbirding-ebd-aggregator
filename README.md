@@ -121,29 +121,48 @@ CREATE TABLE month_obs (
     species_id INTEGER NOT NULL,
     obs INTEGER NOT NULL,
     samples INTEGER NOT NULL,
-    score REAL NOT NULL
-);
+    score REAL NOT NULL,
+    PRIMARY KEY (location_id, month, species_id)
+) WITHOUT ROWID;
 
 CREATE TABLE year_obs (
     location_id TEXT NOT NULL,
     species_id INTEGER NOT NULL,
     obs INTEGER NOT NULL,
     samples INTEGER NOT NULL,
-    score REAL NOT NULL
-);
+    score REAL NOT NULL,
+    PRIMARY KEY (location_id, species_id)
+) WITHOUT ROWID;
 
 CREATE TABLE region_month_obs (
     region_id INTEGER NOT NULL,
     month INTEGER NOT NULL,
     species_id INTEGER NOT NULL,
-    obs INTEGER NOT NULL
-);
+    obs INTEGER NOT NULL,
+    PRIMARY KEY (region_id, month, species_id)
+) WITHOUT ROWID;
 
 CREATE TABLE region_month_samples (
     region_id INTEGER NOT NULL,
     month INTEGER NOT NULL,
-    samples INTEGER NOT NULL
+    samples INTEGER NOT NULL,
+    PRIMARY KEY (region_id, month)
+) WITHOUT ROWID;
+
+CREATE TABLE metadata (
+    version TEXT NOT NULL,
+    version_year TEXT NOT NULL,
+    version_month TEXT NOT NULL,
+    generated_at TEXT NOT NULL
 );
+
+CREATE INDEX idx_mo_species_score ON month_obs(species_id, score DESC);
+CREATE INDEX idx_yo_species_score ON year_obs(species_id, score DESC);
+CREATE UNIQUE INDEX idx_regions_code ON regions(code);
+CREATE INDEX idx_hotspots_country ON hotspots(country_code);
+CREATE INDEX idx_hotspots_subnational1 ON hotspots(subnational1_code);
+CREATE INDEX idx_hotspots_subnational2 ON hotspots(subnational2_code);
+CREATE INDEX idx_hotspots_region ON hotspots(region_code);
 ```
 
 ## Notes

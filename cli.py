@@ -30,12 +30,12 @@ from utils import load_env_file
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 
-def get_output_paths(env_vars: dict) -> tuple[Path, Path, Path]:
+def get_output_paths(env_vars: dict) -> tuple[Path, Path, Path, Path]:
     """
-    Get dataset, output, and packs directories based on OUTPUT_PATH env var.
+    Get dataset, output, packs, and beta packs directories based on OUTPUT_PATH env var.
 
     Returns:
-        Tuple of (datasets_dir, outputs_dir, packs_dir)
+        Tuple of (datasets_dir, outputs_dir, packs_dir, beta_packs_dir)
     """
     output_path = env_vars.get("OUTPUT_PATH", "")
     if output_path:
@@ -46,8 +46,9 @@ def get_output_paths(env_vars: dict) -> tuple[Path, Path, Path]:
     datasets_dir = base_dir / "datasets"
     outputs_dir = base_dir / "output"
     packs_dir = outputs_dir / "packs"
+    beta_packs_dir = outputs_dir / "beta_packs"
 
-    return datasets_dir, outputs_dir, packs_dir
+    return datasets_dir, outputs_dir, packs_dir, beta_packs_dir
 
 
 def send_notification(
@@ -570,6 +571,71 @@ def run_build_db(paths: dict, env_vars: dict) -> bool:
         return False
 
 
+def run_build_h3(paths: dict, env_vars: dict) -> bool:
+    """
+    Fold H3-binned grid tables (h3_cells, h3_cell_obs, h3_cell_samples) into the
+    targets database, reusing its species table. Must run after Build Database.
+    Returns True if successful, False otherwise.
+    """
+    filtered_file = paths["filtered"]
+    sampling_file = paths["sampling_filtered"]
+    db_file = paths["db"]
+
+    print("\n" + "-" * 50)
+    print("Step: Build H3 Tables")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    if not filtered_file.exists():
+        print(f"\nError: Filtered species file not found: {filtered_file}")
+        print("Please run the filter step first.")
+        return False
+
+    if not sampling_file.exists():
+        print(f"\nError: Filtered sampling file not found: {sampling_file}")
+        print("Please run the sampling filter step first.")
+        return False
+
+    if not db_file.exists():
+        print(f"\nError: Targets database not found: {db_file}")
+        print("Please run the build database step first.")
+        return False
+
+    memory_limit = env_vars.get("MEMORY_LIMIT", "24")
+    threads = env_vars.get("THREADS", "8")
+    version = f"{paths['month_abbrev'].lower()}-{paths['year']}"
+
+    print(f"\nSpecies file: {filtered_file}")
+    print(f"Sampling file: {sampling_file}")
+    print(f"Targets db: {db_file}")
+    print(f"Memory limit: {memory_limit}GB")
+    print(f"Threads: {threads}")
+    print()
+    sys.stdout.flush()
+
+    generate_script = SCRIPT_DIR / "generate_h3.py"
+
+    cmd = [
+        "caffeinate", "-dims",
+        "python3", str(generate_script),
+        str(filtered_file),
+        str(sampling_file),
+        str(db_file),
+        "--version", version,
+        "--memory-limit", f"{memory_limit}GB",
+        "--threads", threads,
+        "--temp-dir", str(SCRIPT_DIR / ".tmp"),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nH3 tables build complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nH3 tables build failed: {e}")
+        return False
+
+
 def run_generate_packs(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
     """
     Generate compressed JSON pack files for each region.
@@ -669,6 +735,136 @@ def run_upload_packs(
         "python3", str(upload_script),
         str(packs_dir),
         pack_version,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nUpload failed: {e}")
+        return False
+
+
+def prompt_regions() -> list[str]:
+    """
+    Prompt for an optional comma/whitespace-separated list of region codes.
+    Returns an empty list if the user leaves the input blank (meaning "all regions").
+    """
+    raw = input(
+        "Enter region codes to include (comma-separated), or leave blank for all: "
+    ).strip()
+    if not raw:
+        return []
+    return [r.strip().upper() for r in raw.replace(",", " ").split() if r.strip()]
+
+
+def run_generate_beta_packs(
+    paths: dict, env_vars: dict, beta_packs_dir: Path, regions: list[str]
+) -> bool:
+    """
+    Generate a beta pack build (fixed 'beta' version, own directory).
+    Returns True if successful, False otherwise.
+    """
+    db_file = paths["db"]
+
+    print("\n" + "-" * 50)
+    print("Step: Generate Beta Packs")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    if not db_file.exists():
+        print(f"\nError: Database file not found: {db_file}")
+        print("Please run the build database step first.")
+        return False
+
+    # Check for eBird API key
+    api_key = env_vars.get("EBIRD_API_KEY")
+    if not api_key:
+        print("\nError: EBIRD_API_KEY not found in .env")
+        print("Please add your eBird API key to the .env file.")
+        return False
+
+    print(f"\nDatabase: {db_file}")
+    print(f"Output directory: {beta_packs_dir}")
+    print(f"Regions: {', '.join(regions) if regions else 'all'}")
+    print()
+    sys.stdout.flush()
+
+    generate_script = SCRIPT_DIR / "generate_packs.py"
+
+    cmd = [
+        "caffeinate", "-dims",
+        "python3", str(generate_script),
+        str(db_file),
+        "--output-dir", str(beta_packs_dir),
+        "--beta",
+    ]
+    if regions:
+        cmd += ["--regions", *regions]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nBeta pack generation complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nBeta pack generation failed: {e}")
+        return False
+
+
+def run_upload_beta_packs(env_vars: dict, beta_packs_dir: Path) -> bool:
+    """
+    Upload beta packs to S3-compatible storage under their own prefix.
+    Returns True if successful, False otherwise.
+    """
+    print("\n" + "-" * 50)
+    print("Step: Upload Beta Packs to S3")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    # Check for S3 credentials
+    missing = []
+    if not env_vars.get("S3_KEY_ID"):
+        missing.append("S3_KEY_ID")
+    if not env_vars.get("S3_SECRET"):
+        missing.append("S3_SECRET")
+    if not env_vars.get("S3_BUCKET"):
+        missing.append("S3_BUCKET")
+    if not env_vars.get("S3_ENDPOINT"):
+        missing.append("S3_ENDPOINT")
+
+    if missing:
+        print(f"\nError: Missing S3 credentials in .env: {', '.join(missing)}")
+        return False
+
+    # Check that packs exist
+    index_file = beta_packs_dir / "packs.json.gz"
+    version_dir = beta_packs_dir / "beta"
+
+    if not index_file.exists():
+        print(f"\nError: Index file not found: {index_file}")
+        print("Please run the generate beta packs step first.")
+        return False
+
+    if not version_dir.exists():
+        print(f"\nError: Version directory not found: {version_dir}")
+        print("Please run the generate beta packs step first.")
+        return False
+
+    s3_dir = env_vars.get("S3_DIR", "")
+    beta_prefix = f"{s3_dir}/beta" if s3_dir else "beta"
+
+    print(f"\nPacks directory: {beta_packs_dir}")
+    print(f"S3 prefix: {beta_prefix}")
+    print()
+    sys.stdout.flush()
+
+    upload_script = SCRIPT_DIR / "upload_packs.py"
+
+    cmd = [
+        "python3", str(upload_script),
+        str(beta_packs_dir),
+        "beta",
+        "--prefix", beta_prefix,
     ]
 
     try:
@@ -848,6 +1044,10 @@ def run_all_steps(
         print("\nAborting: Build database step failed.")
         sys.exit(1)
 
+    if not run_build_h3(paths, env_vars):
+        print("\nAborting: Build H3 database step failed.")
+        sys.exit(1)
+
     if not run_generate_packs(paths, env_vars, packs_dir):
         print("\nAborting: Generate packs step failed.")
         sys.exit(1)
@@ -861,7 +1061,7 @@ def main():
     env_vars = load_env_file()
 
     # Get directories based on OUTPUT_PATH
-    datasets_dir, outputs_dir, packs_dir = get_output_paths(env_vars)
+    datasets_dir, outputs_dir, packs_dir, beta_packs_dir = get_output_paths(env_vars)
 
     # Step 1: Choose dataset month
     month_options = get_month_options()
@@ -886,10 +1086,13 @@ def main():
         "Extract Sampling",
         "Filter Sampling",
         "Build Database",
+        "Build H3 Tables",
         "Generate Packs",
         "All (without upload)",
         "Upload Packs",
         "Upload SQLite",
+        "Generate Beta Packs",
+        "Upload Beta Packs",
     ]
 
     print()
@@ -915,13 +1118,23 @@ def main():
     elif op_idx == 6:
         success = run_build_db(paths, env_vars)
     elif op_idx == 7:
-        success = run_generate_packs(paths, env_vars, packs_dir)
+        success = run_build_h3(paths, env_vars)
     elif op_idx == 8:
-        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
+        success = run_generate_packs(paths, env_vars, packs_dir)
     elif op_idx == 9:
-        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
     elif op_idx == 10:
+        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+    elif op_idx == 11:
         success = run_upload_sqlite(paths, env_vars)
+    elif op_idx == 12:
+        print()
+        regions = prompt_regions()
+        print()
+        print("=" * 50)
+        success = run_generate_beta_packs(paths, env_vars, beta_packs_dir, regions)
+    elif op_idx == 13:
+        success = run_upload_beta_packs(env_vars, beta_packs_dir)
 
     print()
     print("=" * 50)
