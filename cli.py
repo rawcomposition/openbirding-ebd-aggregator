@@ -120,6 +120,7 @@ def get_file_paths(
         ),
         # Output
         "db": outputs_dir / f"targets-{month_lower}-{year}.db",
+        "occurrences_db": outputs_dir / f"occurrences-{month_lower}-{year}.db",
         # Version info
         "month_abbrev": month_abbrev,
         "year": year,
@@ -636,6 +637,48 @@ def run_build_h3(paths: dict, env_vars: dict) -> bool:
         return False
 
 
+def run_build_occurrences(paths: dict, env_vars: dict) -> bool:
+    """
+    Build occurrences.db — a compact companion database of species-occurrence
+    frequencies per hotspot and per H3 cell, derived from targets.db (plus a
+    blob cache so the web API loads it in ~0.5s). Powers the web app's
+    "Best Hotspots" tool. Must run after Build Database and Build H3 Tables.
+    Returns True if successful, False otherwise.
+    """
+    db_file = paths["db"]
+    occ_file = paths["occurrences_db"]
+
+    print("\n" + "-" * 50)
+    print("Step: Build Occurrences DB")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    if not db_file.exists():
+        print(f"\nError: Targets database not found: {db_file}")
+        print("Please run the build database and H3 steps first.")
+        return False
+
+    print(f"\nTargets db: {db_file}")
+    print(f"Output: {occ_file}")
+    print()
+    sys.stdout.flush()
+
+    cmd = [
+        "caffeinate", "-dims",
+        "python3", str(SCRIPT_DIR / "generate_occurrences.py"),
+        str(db_file),
+        str(occ_file),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nOccurrences DB build complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nOccurrences DB build failed: {e}")
+        return False
+
+
 def run_generate_packs(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
     """
     Generate compressed JSON pack files for each region.
@@ -926,6 +969,27 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
         print("\nUpload cancelled.")
         return False
 
+    # Stage the companion occurrences.db as .new (does not affect the running
+    # app); the swap-occurrences-db admin call below hot-reloads it.
+    occ_file = paths.get("occurrences_db")
+    occ_uploaded = False
+    if occ_file and occ_file.exists():
+        print("\nUploading to occurrences.db.new...")
+        sys.stdout.flush()
+        occ_cmd = (
+            f"pv \"{occ_file}\" | ssh {ssh_user}@{ssh_host} "
+            f"\"docker run --rm -i -v {docker_volume}:/data alpine "
+            f"sh -c 'cat > /data/occurrences.db.new'\""
+        )
+        try:
+            subprocess.run(occ_cmd, shell=True, check=True)
+            occ_uploaded = True
+        except subprocess.CalledProcessError as e:
+            print(f"\noccurrences.db upload failed: {e}")
+            return False
+    else:
+        print("\nNote: no occurrences.db built for this month — skipping its upload.")
+
     # Upload to targets.db.new (does not affect the running app)
     print("\nUploading to targets.db.new...")
     sys.stdout.flush()
@@ -970,6 +1034,8 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
             return False
         if resp.status_code == 200 and result.get("ok"):
             print(f"Database swapped successfully! Version: {result.get('version')}")
+            if occ_uploaded:
+                return swap_occurrences_db(db_swap_endpoint, api_token)
             return True
         else:
             print(
@@ -981,6 +1047,55 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     except requests.RequestException as e:
         print(f"\nSwap request failed: {e}")
         print("The uploaded database remains staged as /data/targets.db.new.")
+        return False
+
+
+def swap_occurrences_db(db_swap_endpoint: str, api_token: str) -> bool:
+    """
+    Hot-reload the staged /data/occurrences.db.new via the admin API. The
+    endpoint URL is the targets swap endpoint with its final path segment
+    replaced (both live under the same /admin route).
+    """
+    swap_url = db_swap_endpoint.replace("swap-targets-db", "swap-occurrences-db")
+    if swap_url == db_swap_endpoint:
+        print(
+            "\nCould not derive the occurrences swap URL from DB_SWAP_ENDPOINT "
+            "(expected it to end in swap-targets-db). occurrences.db.new stays "
+            "staged; it will NOT load until swapped or renamed manually."
+        )
+        return False
+
+    print("\nSwapping occurrences database (rebuilds the in-memory index; may take a minute)...")
+    sys.stdout.flush()
+    try:
+        resp = requests.post(
+            swap_url,
+            headers={"Authorization": f"Bearer {api_token}"},
+            timeout=300,
+        )
+        try:
+            result = resp.json()
+        except ValueError:
+            print(
+                f"\nOccurrences swap failed ({resp.status_code}): non-JSON response. "
+                "The file remains staged as /data/occurrences.db.new."
+            )
+            return False
+        if resp.status_code == 200 and result.get("ok"):
+            print(
+                f"Occurrences database swapped! Version: {result.get('version')} "
+                f"({result.get('locations')} locations)"
+            )
+            return True
+        print(
+            f"\nOccurrences swap failed ({resp.status_code}): "
+            f"{result.get('error', resp.text)} "
+            "(the file remains staged as /data/occurrences.db.new)"
+        )
+        return False
+    except requests.RequestException as e:
+        print(f"\nOccurrences swap request failed: {e}")
+        print("The file remains staged as /data/occurrences.db.new.")
         return False
 
 
@@ -1048,6 +1163,10 @@ def run_all_steps(
         print("\nAborting: Build H3 database step failed.")
         sys.exit(1)
 
+    if not run_build_occurrences(paths, env_vars):
+        print("\nAborting: Build occurrences database step failed.")
+        sys.exit(1)
+
     if not run_generate_packs(paths, env_vars, packs_dir):
         print("\nAborting: Generate packs step failed.")
         sys.exit(1)
@@ -1087,6 +1206,7 @@ def main():
         "Filter Sampling",
         "Build Database",
         "Build H3 Tables",
+        "Build Occurrences DB",
         "Generate Packs",
         "All (without upload)",
         "Upload Packs",
@@ -1120,20 +1240,22 @@ def main():
     elif op_idx == 7:
         success = run_build_h3(paths, env_vars)
     elif op_idx == 8:
-        success = run_generate_packs(paths, env_vars, packs_dir)
+        success = run_build_occurrences(paths, env_vars)
     elif op_idx == 9:
-        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
+        success = run_generate_packs(paths, env_vars, packs_dir)
     elif op_idx == 10:
-        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
     elif op_idx == 11:
-        success = run_upload_sqlite(paths, env_vars)
+        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
     elif op_idx == 12:
+        success = run_upload_sqlite(paths, env_vars)
+    elif op_idx == 13:
         print()
         regions = prompt_regions()
         print()
         print("=" * 50)
         success = run_generate_beta_packs(paths, env_vars, beta_packs_dir, regions)
-    elif op_idx == 13:
+    elif op_idx == 14:
         success = run_upload_beta_packs(env_vars, beta_packs_dir)
 
     print()

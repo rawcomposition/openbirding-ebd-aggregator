@@ -15,8 +15,7 @@ Create a virtual environment and install Python dependencies:
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+./venv/bin/pip install -r requirements.txt
 ```
 
 Copy the example environment file and configure:
@@ -47,12 +46,14 @@ cp .env.example .env
 
 ## Usage
 
-Activate the virtual environment and run the interactive CLI:
+Run the interactive CLI:
 
 ```bash
-source venv/bin/activate
-python cli.py
+./cli
 ```
+
+The `./cli` launcher uses `venv/bin/python` automatically, so you do not need
+to activate the virtual environment first.
 
 The CLI will prompt you to:
 
@@ -65,10 +66,16 @@ The CLI will prompt you to:
    - **Extract Sampling** - Extract the gzipped sampling data from the tar
    - **Filter Sampling** - Extract required columns from complete checklists
    - **Build Database** - Generate the SQLite database
+   - **Build Occurrences DB** - Derive `occurrences-{month}-{year}.db` from the
+     targets db: species-occurrence frequencies per hotspot and per H3 cell
+     (res 3-4, rolled up from the res-6 h3 tables), plus a typed-array blob
+     cache. Powers the web app's "Best Hotspots" tool.
    - **Generate Packs** - Generate compressed JSON packs for each region
    - **All (without upload)** - Run all steps except upload
    - **Upload Packs** - Upload packs to S3-compatible storage
-   - **Upload SQLite** - Upload the SQLite database to the remote server
+   - **Upload SQLite** - Upload the targets and occurrences databases to the
+     remote server (both staged as `.db.new`), then hot-swap each via the
+     admin API — no restart needed
 
 Each step skips automatically if its output file already exists.
 
@@ -79,6 +86,7 @@ aggregator/
 ├── datasets/           # Downloaded and intermediate data files
 └── output/
     ├── targets-{month}-{year}.db
+    ├── occurrences-{month}-{year}.db
     └── packs/
         ├── packs.json.gz
         └── {month}-{year}/

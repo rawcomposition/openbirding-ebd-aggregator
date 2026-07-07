@@ -1,5 +1,6 @@
 boto3
 duckdb
+numpy
 python-dateutil
 requests
 simple-term-menu

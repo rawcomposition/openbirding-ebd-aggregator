@@ -12,9 +12,9 @@ The h3_* tables are folded into an existing targets database (built by
 generate_data.py), reusing its ``species`` table. Optimized for polygon ->
 most-common-species queries (e.g. BirdPlan):
 
-  h3_cells(cell_ref PK, h3, region_code)        -- H3<->dense-ref map + region
-  h3_cell_obs(cell_ref, month, species_id, obs) -- numerator, clustered by cell
-  h3_cell_samples(cell_ref, month, samples)     -- denominator (per cell-month)
+  h3_cells(res, cell_ref PK, h3, region_code)        -- H3<->dense-ref map + region
+  h3_cell_obs(res, cell_ref, month, species_id, obs) -- numerator, clustered by cell
+  h3_cell_samples(res, cell_ref, month, samples)     -- denominator (per cell-month)
   h3_metadata(version, res, generated_at)
 
 The 64-bit H3 index is stored once per cell in h3_cells; the large obs/samples
@@ -28,7 +28,7 @@ from the (much larger) species file and are joined to cells via locality id.
 
 Usage:
     python generate_h3.py <species_file> <sampling_file> <targets.db> \
-        --version may-2026 [--res 6] \
+        --version may-2026 [--resolutions 6,4,3] \
         [--memory-limit 24GB] [--threads 8] [--temp-dir .tmp]
 """
 
@@ -47,6 +47,13 @@ import duckdb
 from utils import format_duration
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+
+# Res 6 is the only resolution consumers read from targets.db (mobile packs /
+# other apps). The web app's Best Hotspots grid (res 3-4) is rolled up from
+# res 6 by generate_occurrences.py, so it doesn't need to be stored here.
+# The finest listed resolution is built from source; any coarser ones are
+# rolled up from it (h3_cell_to_parent can jump levels, so gaps are fine).
+DEFAULT_RESOLUTIONS = (6,)
 
 # Binary pack format. Bump if the on-disk layout changes.
 PACK_MAGIC = b"H3P1"
@@ -222,37 +229,42 @@ def prepare_h3_tables(target_db: Path) -> None:
     sq.execute("PRAGMA journal_mode = MEMORY")
     sq.execute("PRAGMA synchronous = OFF")
     sq.execute("DROP INDEX IF EXISTS idx_h3_cells_h3")
+    sq.execute("DROP INDEX IF EXISTS idx_h3_cells_res_latlng")
     for table in H3_TABLES:
         sq.execute(f"DROP TABLE IF EXISTS {table}")
     sq.execute(
         """
         CREATE TABLE h3_cells (
-            cell_ref INTEGER PRIMARY KEY,
+            res INTEGER NOT NULL,
+            cell_ref INTEGER NOT NULL,
             h3 INTEGER NOT NULL,
             region_code TEXT,
             lat REAL,
-            lng REAL
+            lng REAL,
+            PRIMARY KEY (res, cell_ref)
         )
         """
     )
     sq.execute(
         """
         CREATE TABLE h3_cell_obs (
+            res INTEGER NOT NULL,
             cell_ref INTEGER NOT NULL,
             month INTEGER NOT NULL,
             species_id INTEGER NOT NULL,
             obs INTEGER NOT NULL,
-            PRIMARY KEY (cell_ref, month, species_id)
+            PRIMARY KEY (res, cell_ref, month, species_id)
         ) WITHOUT ROWID
         """
     )
     sq.execute(
         """
         CREATE TABLE h3_cell_samples (
+            res INTEGER NOT NULL,
             cell_ref INTEGER NOT NULL,
             month INTEGER NOT NULL,
             samples INTEGER NOT NULL,
-            PRIMARY KEY (cell_ref, month)
+            PRIMARY KEY (res, cell_ref, month)
         ) WITHOUT ROWID
         """
     )
@@ -388,8 +400,6 @@ def build_aggregates(
 
 def write_h3_tables(
     con: duckdb.DuckDBPyConnection,
-    target_db: Path,
-    version: str,
     res: int,
 ) -> dict:
     """
@@ -401,6 +411,7 @@ def write_h3_tables(
     query maps H3 cells -> cell_ref via h3_cells.h3, then filters by
     (cell_ref, month).
     """
+    con.execute("DROP TABLE IF EXISTS cell_dim")
     con.execute(
         """
         CREATE TEMP TABLE cell_dim AS
@@ -423,60 +434,91 @@ def write_h3_tables(
     )
     con.execute(
         """
-        INSERT INTO tdb.h3_cells (cell_ref, h3, region_code, lat, lng)
-        SELECT cell_ref, h3, region_code, lat, lng FROM cell_dim ORDER BY cell_ref
-        """
+        INSERT INTO tdb.h3_cells (res, cell_ref, h3, region_code, lat, lng)
+        SELECT ?, cell_ref, h3, region_code, lat, lng FROM cell_dim ORDER BY cell_ref
+        """,
+        [res],
     )
     con.execute(
         """
-        INSERT INTO tdb.h3_cell_obs (cell_ref, month, species_id, obs)
-        SELECT d.cell_ref, a.month, a.species_id, a.obs
+        INSERT INTO tdb.h3_cell_obs (res, cell_ref, month, species_id, obs)
+        SELECT ?, d.cell_ref, a.month, a.species_id, a.obs
         FROM cell_obs_agg a
         JOIN cell_dim d ON a.cell = d.h3
         ORDER BY d.cell_ref, a.month, a.species_id
-        """
+        """,
+        [res],
     )
     con.execute(
         """
-        INSERT INTO tdb.h3_cell_samples (cell_ref, month, samples)
-        SELECT d.cell_ref, a.month, a.samples
+        INSERT INTO tdb.h3_cell_samples (res, cell_ref, month, samples)
+        SELECT ?, d.cell_ref, a.month, a.samples
         FROM cell_samples_agg a
         JOIN cell_dim d ON a.cell = d.h3
         ORDER BY d.cell_ref, a.month
-        """
+        """,
+        [res],
     )
 
     orphan = con.execute(
         "SELECT COUNT(*) FROM (SELECT DISTINCT cell FROM cell_obs_agg "
         "WHERE cell NOT IN (SELECT h3 FROM cell_dim))"
     ).fetchone()[0]
-    con.execute("DETACH tdb")
-
-    # DuckDB's SQLite scanner cannot read back WITHOUT ROWID tables (it relies
-    # on ROWID), so gather stats and finish with a plain sqlite3 connection.
-    sq = sqlite3.connect(target_db)
     stats = {
-        "cell_obs": sq.execute("SELECT COUNT(*) FROM h3_cell_obs").fetchone()[0],
-        "cell_samples": sq.execute("SELECT COUNT(*) FROM h3_cell_samples").fetchone()[0],
-        "cells": sq.execute("SELECT COUNT(*) FROM h3_cells").fetchone()[0],
+        "res": res,
+        "cell_obs": con.execute("SELECT COUNT(*) FROM cell_obs_agg").fetchone()[0],
+        "cell_samples": con.execute("SELECT COUNT(*) FROM cell_samples_agg").fetchone()[0],
+        "cells": con.execute("SELECT COUNT(*) FROM cell_dim").fetchone()[0],
         "orphan_cells": orphan,
     }
-    sq.execute(
-        "INSERT INTO h3_metadata (version, res, generated_at) VALUES (?, ?, ?)",
-        (version, res, datetime.now(timezone.utc).isoformat()),
-    )
-    # h3 -> cell_ref lookup for translating polygon cells at query time.
-    sq.execute("CREATE UNIQUE INDEX idx_h3_cells_h3 ON h3_cells(h3)")
-    # Centre-point index for bounding-box queries: WHERE lat BETWEEN ? AND ?
-    # AND lng BETWEEN ? AND ?. Leading lat column bounds the scan by latitude.
-    sq.execute("CREATE INDEX idx_h3_cells_latlng ON h3_cells(lat, lng)")
-    # ANALYZE just the new tables (no whole-db VACUUM -- targets db is large).
-    sq.execute("ANALYZE h3_cells")
-    sq.execute("ANALYZE h3_cell_obs")
-    sq.execute("ANALYZE h3_cell_samples")
-    sq.commit()
-    sq.close()
     return stats
+
+
+def roll_up_aggregates(
+    con: duckdb.DuckDBPyConnection,
+    target_res: int,
+) -> None:
+    """Roll the current temp aggregates up to a coarser parent resolution."""
+    con.execute(
+        f"""
+        CREATE TEMP TABLE next_cell_obs_agg AS
+        SELECT
+            CAST(h3_cell_to_parent(cell, {target_res}) AS BIGINT) AS cell,
+            month,
+            species_id,
+            SUM(obs) AS obs
+        FROM cell_obs_agg
+        GROUP BY 1, 2, 3
+        """
+    )
+    con.execute(
+        f"""
+        CREATE TEMP TABLE next_cell_samples_agg AS
+        SELECT
+            CAST(h3_cell_to_parent(cell, {target_res}) AS BIGINT) AS cell,
+            month,
+            SUM(samples) AS samples
+        FROM cell_samples_agg
+        GROUP BY 1, 2
+        """
+    )
+    con.execute(
+        f"""
+        CREATE TEMP TABLE next_cell_region_samples AS
+        SELECT
+            CAST(h3_cell_to_parent(cell, {target_res}) AS BIGINT) AS cell,
+            region_code,
+            SUM(samples) AS samples
+        FROM cell_region_samples
+        GROUP BY 1, 2
+        """
+    )
+    con.execute("DROP TABLE cell_obs_agg")
+    con.execute("DROP TABLE cell_samples_agg")
+    con.execute("DROP TABLE cell_region_samples")
+    con.execute("ALTER TABLE next_cell_obs_agg RENAME TO cell_obs_agg")
+    con.execute("ALTER TABLE next_cell_samples_agg RENAME TO cell_samples_agg")
+    con.execute("ALTER TABLE next_cell_region_samples RENAME TO cell_region_samples")
 
 
 # ---------------------------------------------------------------------------
@@ -536,22 +578,26 @@ def encode_region_pack(h3_db: Path, region: str, res: int) -> bytes:
     Provided for the later breakout; not used by the main build.
     """
     con = sqlite3.connect(f"file:{h3_db}?mode=ro", uri=True)
-    ref_filter = (
-        "cell_ref IN (SELECT cell_ref FROM h3_cells "
-        "WHERE region_code = ? OR region_code LIKE ? || '-%')"
-    )
     # Emit the app-facing H3 ids (not the internal cell_ref).
     obs_rows = con.execute(
-        f"SELECT c.h3, o.species_id, o.month, o.obs "
-        f"FROM h3_cell_obs o JOIN h3_cells c ON c.cell_ref = o.cell_ref "
-        f"WHERE o.{ref_filter} ORDER BY c.h3, o.species_id, o.month",
-        (region, region),
+        """
+        SELECT c.h3, o.species_id, o.month, o.obs
+        FROM h3_cell_obs o
+        JOIN h3_cells c ON c.res = o.res AND c.cell_ref = o.cell_ref
+        WHERE o.res = ? AND (c.region_code = ? OR c.region_code LIKE ? || '-%')
+        ORDER BY c.h3, o.species_id, o.month
+        """,
+        (res, region, region),
     ).fetchall()
     samp_rows = con.execute(
-        f"SELECT c.h3, s.month, s.samples "
-        f"FROM h3_cell_samples s JOIN h3_cells c ON c.cell_ref = s.cell_ref "
-        f"WHERE s.{ref_filter} ORDER BY c.h3, s.month",
-        (region, region),
+        """
+        SELECT c.h3, s.month, s.samples
+        FROM h3_cell_samples s
+        JOIN h3_cells c ON c.res = s.res AND c.cell_ref = s.cell_ref
+        WHERE s.res = ? AND (c.region_code = ? OR c.region_code LIKE ? || '-%')
+        ORDER BY c.h3, s.month
+        """,
+        (res, region, region),
     ).fetchall()
     con.close()
     cells = assemble_cells(obs_rows, samp_rows)
@@ -567,12 +613,13 @@ def build(
     sampling_file: Path,
     target_db: Path,
     version: str,
-    res: int,
+    resolutions: list[int],
     memory_limit: Optional[str],
     threads: Optional[int],
     temp_dir: Optional[Path],
 ) -> None:
     start = time.time()
+    res = resolutions[0]  # finest — built from source, coarser ones roll up
 
     config = {}
     duck_temp = (temp_dir or (Path.cwd() / ".tmp")).resolve()
@@ -588,7 +635,7 @@ def build(
     con.execute("INSTALL h3 FROM community; LOAD h3;")
     con.execute("INSTALL sqlite; LOAD sqlite;")
 
-    print(f"H3 resolution: {res}")
+    print(f"H3 resolutions: {', '.join(map(str, resolutions))}")
     print(f"Species file:  {species_file}")
     print(f"Sampling file: {sampling_file}")
     print(f"Targets db:    {target_db}")
@@ -615,14 +662,38 @@ def build(
 
     print("\nStep 3/3: Writing h3_ tables into targets db...")
     t = time.time()
-    stats = write_h3_tables(con, target_db, version, res)
+    all_stats = []
+    for i, current_res in enumerate(resolutions):
+        if i > 0:
+            print(f"  - rolling up to resolution {current_res}...")
+            roll_up_aggregates(con, current_res)
+        stats = write_h3_tables(con, current_res)
+        all_stats.append(stats)
+    con.execute("DETACH tdb")
     con.close()
-    print(
-        f"  cells: {stats['cells']:,}  h3_cell_obs: {stats['cell_obs']:,}  "
-        f"h3_cell_samples: {stats['cell_samples']:,}"
-    )
-    if stats["orphan_cells"]:
-        print(f"  note: {stats['orphan_cells']:,} cells have obs but no region winner")
+    sq = sqlite3.connect(target_db)
+    for stats in all_stats:
+        sq.execute(
+            "INSERT INTO h3_metadata (version, res, generated_at) VALUES (?, ?, ?)",
+            (version, stats["res"], datetime.now(timezone.utc).isoformat()),
+        )
+    sq.execute("CREATE UNIQUE INDEX idx_h3_cells_h3 ON h3_cells(res, h3)")
+    sq.execute("CREATE INDEX idx_h3_cells_res_latlng ON h3_cells(res, lat, lng)")
+    sq.execute("ANALYZE h3_cells")
+    sq.execute("ANALYZE h3_cell_obs")
+    sq.execute("ANALYZE h3_cell_samples")
+    sq.commit()
+    sq.close()
+    for stats in all_stats:
+        print(
+            f"  res {stats['res']}: cells {stats['cells']:,}  "
+            f"h3_cell_obs {stats['cell_obs']:,}  "
+            f"h3_cell_samples {stats['cell_samples']:,}"
+        )
+        if stats["orphan_cells"]:
+            print(
+                f"    note: {stats['orphan_cells']:,} cells have obs but no region winner"
+            )
     print(f"  ({format_duration(time.time() - t)})")
 
     print(f"\nDone in {format_duration(time.time() - start)}")
@@ -640,7 +711,13 @@ def main():
         help="Existing targets SQLite db to fold h3_ tables into (must have a species table)",
     )
     parser.add_argument("--version", type=str, required=True, help="e.g. may-2026")
-    parser.add_argument("--res", type=int, default=6)
+    parser.add_argument(
+        "--resolutions",
+        type=str,
+        default=",".join(map(str, DEFAULT_RESOLUTIONS)),
+        help="Comma-separated H3 resolutions to emit, e.g. 6,4,3. "
+        "The finest is built from source; the rest are rolled up from it.",
+    )
     parser.add_argument("--memory-limit", type=str)
     parser.add_argument("--threads", type=int)
     parser.add_argument("--temp-dir", type=Path)
@@ -657,13 +734,21 @@ def main():
             file=sys.stderr,
         )
         sys.exit(1)
+    try:
+        resolutions = sorted({int(r) for r in args.resolutions.split(",")}, reverse=True)
+    except ValueError:
+        print("Error: --resolutions must be comma-separated integers.", file=sys.stderr)
+        sys.exit(1)
+    if not resolutions or any(r < 0 or r > 15 for r in resolutions):
+        print("Error: --resolutions must contain H3 resolutions in 0-15.", file=sys.stderr)
+        sys.exit(1)
 
     build(
         species_file=args.species_file,
         sampling_file=args.sampling_file,
         target_db=args.target_db,
         version=args.version,
-        res=args.res,
+        resolutions=resolutions,
         memory_limit=args.memory_limit,
         threads=args.threads,
         temp_dir=args.temp_dir,

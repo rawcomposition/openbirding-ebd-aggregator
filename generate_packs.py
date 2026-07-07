@@ -28,6 +28,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 
 # Rate limiting for eBird API
 EBIRD_API_DELAY = 1.0  # 1 second between API calls
+PACK_H3_RES = 6
 
 
 @dataclass
@@ -332,8 +333,8 @@ def build_pack_cells(
     index is emitted as a canonical lowercase hex string so it round-trips
     safely through JSON/JavaScript. Cells are selected by their winning region
     (h3_cells.region_code), matching the prefix rule used for region packs.
-    Returns None if the database has no h3 tables (i.e. the Build H3 step has
-    not been run).
+    Returns None if the database has no H3 tables or does not include the pack
+    resolution (currently fixed at 6).
     """
     has_h3 = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='h3_cells'"
@@ -341,33 +342,45 @@ def build_pack_cells(
     if not has_h3:
         return None
 
-    res_row = conn.execute("SELECT res FROM h3_metadata LIMIT 1").fetchone()
-    res = res_row[0] if res_row else None
+    res = PACK_H3_RES
+    has_pack_res = conn.execute(
+        "SELECT 1 FROM h3_metadata WHERE res = ? LIMIT 1",
+        (res,),
+    ).fetchone()
+    if not has_pack_res:
+        return None
 
-    ref_filter = (
-        "cell_ref IN (SELECT cell_ref FROM h3_cells "
-        "WHERE region_code = ? OR region_code LIKE ? || '-%')"
-    )
     samp_rows = conn.execute(
-        f"SELECT c.h3, s.month, s.samples FROM h3_cell_samples s "
-        f"JOIN h3_cells c ON c.cell_ref = s.cell_ref WHERE s.{ref_filter} "
-        f"ORDER BY c.h3, s.month",
-        (region, region),
+        """
+        SELECT c.h3, s.month, s.samples
+        FROM h3_cell_samples s
+        JOIN h3_cells c ON c.res = s.res AND c.cell_ref = s.cell_ref
+        WHERE s.res = ? AND (c.region_code = ? OR c.region_code LIKE ? || '-%')
+        ORDER BY c.h3, s.month
+        """,
+        (res, region, region),
     ).fetchall()
     obs_rows = conn.execute(
-        f"SELECT c.h3, o.species_id, o.month, o.obs FROM h3_cell_obs o "
-        f"JOIN h3_cells c ON c.cell_ref = o.cell_ref WHERE o.{ref_filter} "
-        f"ORDER BY c.h3, o.species_id, o.month",
-        (region, region),
+        """
+        SELECT c.h3, o.species_id, o.month, o.obs
+        FROM h3_cell_obs o
+        JOIN h3_cells c ON c.res = o.res AND c.cell_ref = o.cell_ref
+        WHERE o.res = ? AND (c.region_code = ? OR c.region_code LIKE ? || '-%')
+        ORDER BY c.h3, o.species_id, o.month
+        """,
+        (res, region, region),
     ).fetchall()
 
     # Cell-centre coordinates, keyed by h3, for the region's cells.
     coords_by_cell: dict[int, tuple] = {
         h3: (lat, lng)
         for h3, lat, lng in conn.execute(
-            "SELECT h3, lat, lng FROM h3_cells "
-            "WHERE region_code = ? OR region_code LIKE ? || '-%'",
-            (region, region),
+            """
+            SELECT h3, lat, lng
+            FROM h3_cells
+            WHERE res = ? AND (region_code = ? OR region_code LIKE ? || '-%')
+            """,
+            (res, region, region),
         ).fetchall()
     }
 
