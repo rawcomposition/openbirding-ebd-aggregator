@@ -19,16 +19,20 @@ in-memory index with a few memcpy-speed reads (~0.5 s) instead of iterating
 tens of millions of rows (~60 s).
 
 BLOB CONTRACT (consumed by web/api/lib/lifers-index.ts — keep in sync):
-  loc:samples   int32[numLocs]            zone:{res}:samples  int32[size]
-  loc:lat       float32[numLocs]          zone:{res}:lat      float32[size]
-  loc:lng       float32[numLocs]          zone:{res}:lng      float32[size]
-  loc:qcount    int32[buckets * numLocs]  zone:{res}:qcount   int32[buckets * size]
-  loc:spOff     int32[maxSpeciesId + 2]   zone:{res}:spOff    int32[maxSpeciesId + 2]
-  loc:csrRef    int32[totalRows]          zone:{res}:csrRef   int32[totalRows]
-  loc:csrLvl    uint8[totalRows]          zone:{res}:csrLvl   uint8[totalRows]
-                                          zone:{res}:h3       int64[size]
+  loc:samples      int32[numLocs]            zone:{res}:samples  int32[size]
+  loc:lat          float32[numLocs]          zone:{res}:lat      float32[size]
+  loc:lng          float32[numLocs]          zone:{res}:lng      float32[size]
+  loc:qcount       int32[buckets * numLocs]  zone:{res}:qcount   int32[buckets * size]
+  loc:spOff        int32[maxSpeciesId + 2]   zone:{res}:spOff    int32[maxSpeciesId + 2]
+  loc:csrRef       int32[totalRows]          zone:{res}:csrRef   int32[totalRows]
+  loc:csrLvl       uint8[totalRows]          zone:{res}:csrLvl   uint8[totalRows]
+  loc:cellRef:{res} int32[numLocs]           zone:{res}:h3       int64[size]
   qcount is bucket-major (bucket b occupies [b*n, (b+1)*n)); the CSR is sorted
   by (species_id, ref); size = max cell_ref + 1 (refs are dense per res).
+  cellRef:{res} maps a hotspot (loc_ref) to its zone cell_ref at that
+  resolution, or -1 if none (e.g. its cell fell below the zone's own
+  checklist floor) — lets the API count named hotspots per cell without H3
+  coordinate math (or an h3-js dependency) at request time.
 
 The zone (H3) tables are rolled up here from the finest resolution present in
 targets.db (res 6) — targets.db does not need to carry the coarser resolutions.
@@ -48,13 +52,26 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
-# Rows below these floors are noise and are dropped.
-MIN_SCORE = 0.01  # 1% adjusted frequency
-MIN_CHECKLISTS = 10  # per-location total checklists
+# Hotspot floors match the smallest values the UI offers (5% frequency, 25
+# checklists) — rows below them are unreachable. The 5% floor alone removes
+# ~40% of loc_species rows (the 1-5% band).
+LOC_MIN_SCORE = 0.05
+LOC_MIN_CHECKLISTS = 25
+
+# The zone (grid) frequency floor stays low and is NOT the hotspot presets: a
+# cell-level frequency is diluted by all the unrelated birding effort inside
+# the cell (and the dilution grows with cell size), so the grid answers "do
+# your lifers occur here at all" with a permissive 1% floor. The checklist
+# floor is independent of the hotspot one — cells below it are dropped from
+# the grid entirely.
+ZONE_MIN_SCORE = 0.01
+ZONE_MIN_CHECKLISTS = 25
 
 # Frequency thresholds a user can pick from (adjusted frequency, 0-1).
-# qCount is precomputed per location/cell for each of these.
-FREQUENCY_BUCKETS = [0.01, 0.05, 0.1, 0.2, 0.3, 0.5]
+# qCount is precomputed per location/cell for each of these. Zone species in
+# the 1-5% band fold into bucket 0 — the grid only ever reads bucket 0, and
+# per-bucket zone queries went away with the old Hot Zones endpoints.
+FREQUENCY_BUCKETS = [0.05, 0.1, 0.2, 0.3, 0.5]
 
 # Grid resolutions served by the web UI. Finer than 4 balloons the in-memory
 # index (res 5/6 were ~85% of zone rows) for zoom levels the map never uses.
@@ -74,14 +91,21 @@ def bucket_level_expr(score_expr: str) -> str:
 # --- Row tables (plain SQLite; the SQL mirrors the original TS build) ---------
 
 
-def zone_parent_map(src: Path, zone_resolutions: list[int]) -> tuple[int, list[tuple]]:
+def build_h3_index(
+    src: Path, zone_resolutions: list[int]
+) -> tuple[int, list[tuple], dict[int, list[tuple]]]:
     """
-    Child -> parent mapping for the H3 roll-up, computed with DuckDB's h3
-    extension (both connections only read src, so no lock contention).
+    Everything that needs DuckDB's h3 extension, computed once against the
+    read-only source (both connections only read src, so no lock contention
+    with the sqlite3 writer in build_tables):
 
-    Returns (finest_res, rows) where rows are
-    (target_res, child_cell_ref, parent_h3, parent_lat, parent_lng)
-    for every h3_cells row at the finest resolution in targets.db.
+    1. Child -> parent mapping for the H3 roll-up: rows of
+       (target_res, child_cell_ref, parent_h3, parent_lat, parent_lng) for
+       every h3_cells row at the finest resolution in targets.db.
+    2. Per zone resolution, each hotspot's H3 cell: (location_id, h3), for the
+       same hotspots loc_meta will keep (>= LOC_MIN_CHECKLISTS total checklists).
+       Precomputed so the API's "named hotspots per cell" lookup never needs
+       H3 coordinate math (or an h3-js dependency) at request time.
     """
     con = duckdb.connect()
     con.execute("INSTALL h3 FROM community; LOAD h3;")
@@ -93,9 +117,10 @@ def zone_parent_map(src: Path, zone_resolutions: list[int]) -> tuple[int, list[t
     bad = [r for r in zone_resolutions if r >= finest]
     if bad:
         raise SystemExit(f"--zone-res {bad} must be coarser than the source resolution {finest}")
-    rows: list[tuple] = []
+
+    h3map_rows: list[tuple] = []
     for res in zone_resolutions:
-        rows.extend(
+        h3map_rows.extend(
             con.execute(
                 f"""
                 SELECT {res}, cell_ref,
@@ -106,12 +131,27 @@ def zone_parent_map(src: Path, zone_resolutions: list[int]) -> tuple[int, list[t
                 """
             ).fetchall()
         )
+
+    loc_cells: dict[int, list[tuple]] = {}
+    for res in zone_resolutions:
+        loc_cells[res] = con.execute(
+            f"""
+            SELECT h.id, CAST(h3_latlng_to_cell(h.lat, h.lng, {res}) AS BIGINT)
+            FROM t.hotspots h
+            JOIN (
+              SELECT location_id, MAX(samples) AS total_samples
+              FROM t.year_obs GROUP BY location_id HAVING total_samples >= {LOC_MIN_CHECKLISTS}
+            ) ls ON ls.location_id = h.id
+            WHERE h.lat IS NOT NULL AND h.lng IS NOT NULL
+            """
+        ).fetchall()
+
     con.close()
-    return finest, rows
+    return finest, h3map_rows, loc_cells
 
 
 def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
-    finest_res, h3map_rows = zone_parent_map(src, zone_resolutions)
+    finest_res, h3map_rows, loc_cells = build_h3_index(src, zone_resolutions)
     db = sqlite3.connect(f"file:{out}?mode=rwc", uri=True)
     db.executescript(
         """
@@ -191,6 +231,16 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
           q_count INTEGER NOT NULL,
           PRIMARY KEY (res, bucket, cell_ref)
         ) WITHOUT ROWID;
+
+        -- Each hotspot's H3 cell per zone resolution (raw h3, not cell_ref —
+        -- pack_blobs resolves cell_ref once zone_meta exists). Feeds
+        -- loc:cellRef:{res} in the blob cache; not read directly by the API.
+        CREATE TABLE loc_zone_h3 (
+          res INTEGER NOT NULL,
+          loc_ref INTEGER NOT NULL,
+          h3 INTEGER NOT NULL,
+          PRIMARY KEY (res, loc_ref)
+        ) WITHOUT ROWID;
         """
     )
 
@@ -205,8 +255,8 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
             meta[2],
             datetime.now(timezone.utc).isoformat(),
             json.dumps(FREQUENCY_BUCKETS),
-            MIN_SCORE,
-            MIN_CHECKLISTS,
+            LOC_MIN_SCORE,
+            LOC_MIN_CHECKLISTS,
         ),
     )
 
@@ -238,7 +288,7 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
           SELECT location_id, MAX(samples) AS total_samples
           FROM t.year_obs
           GROUP BY location_id
-          HAVING total_samples >= {MIN_CHECKLISTS}
+          HAVING total_samples >= {LOC_MIN_CHECKLISTS}
         ) ls
         JOIN t.hotspots h ON h.id = ls.location_id
         """
@@ -251,6 +301,17 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
     )
     log(f"  loc_meta: {db.execute('SELECT COUNT(*) FROM loc_meta').fetchone()[0]}")
 
+    log("Building loc_zone_h3...")
+    loc_ref_by_id = dict(db.execute("SELECT location_id, loc_ref FROM loc_meta").fetchall())
+    loc_zone_rows = [
+        (res, loc_ref_by_id[loc_id], h3)
+        for res, rows in loc_cells.items()
+        for loc_id, h3 in rows
+        if loc_id in loc_ref_by_id  # excluded by loc_meta's own filters (e.g. name/coords)
+    ]
+    db.executemany("INSERT INTO loc_zone_h3 (res, loc_ref, h3) VALUES (?, ?, ?)", loc_zone_rows)
+    log(f"  loc_zone_h3: {len(loc_zone_rows)}")
+
     log("Building loc_species (the big one)...")
     db.execute(
         f"""
@@ -258,7 +319,7 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
         SELECT yo.species_id, m.loc_ref, {bucket_level_expr('yo.score')}
         FROM t.year_obs yo
         JOIN loc_meta m ON m.location_id = yo.location_id
-        WHERE yo.score >= {MIN_SCORE}
+        WHERE yo.score >= {LOC_MIN_SCORE}
         """
     )
     log(f"  loc_species: {db.execute('SELECT COUNT(*) FROM loc_species').fetchone()[0]}")
@@ -303,7 +364,7 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
                  SUM(cs.s) AS total_samples
           FROM h3map m JOIN child_samples cs ON cs.cell_ref = m.child_ref
           GROUP BY m.res, m.parent
-          HAVING total_samples >= {MIN_CHECKLISTS}
+          HAVING total_samples >= {ZONE_MIN_CHECKLISTS}
         ) p
         """
     )
@@ -325,12 +386,12 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
         f"""
         INSERT INTO zone_species (res, species_id, cell_ref, bucket_level)
         SELECT cz.res, o.species_id, cz.cell_ref,
-               {bucket_level_expr('(SUM(o.obs) * 1.0 / cz.samples)')}
+               MAX(0, {bucket_level_expr('(SUM(o.obs) * 1.0 / cz.samples)')})
         FROM t.h3_cell_obs o
         JOIN child_zone cz ON cz.child_ref = o.cell_ref
         WHERE o.res = {finest_res}
         GROUP BY cz.res, cz.cell_ref, o.species_id
-        HAVING (SUM(o.obs) * 1.0 / cz.samples) >= {MIN_SCORE}
+        HAVING (SUM(o.obs) * 1.0 / cz.samples) >= {ZONE_MIN_SCORE}
         """
     )
     db.execute("DROP INDEX idx_zone_meta_h3")
@@ -428,6 +489,19 @@ def pack_blobs(out: Path):
 
     # Zones, per resolution
     res_list = [r[0] for r in con.execute("SELECT DISTINCT res FROM occ.zone_meta ORDER BY res").fetchall()]
+
+    # Each hotspot's zone cell_ref per resolution (-1 = none, e.g. below the
+    # zone's own checklist floor) — resolves loc_zone_h3's raw h3 against
+    # zone_meta now that it exists. Lets the API tally "named hotspots per
+    # cell" with plain integer lookups instead of H3 math at request time.
+    log("packing hotspot -> zone cell_ref map...")
+    for res in res_list:
+        h3_to_ref = dict(con.execute("SELECT h3, cell_ref FROM occ.zone_meta WHERE res = ?", [res]).fetchall())
+        cell_ref_by_loc = np.full(n, -1, dtype="<i4")
+        for loc_ref, h3 in con.execute("SELECT loc_ref, h3 FROM occ.loc_zone_h3 WHERE res = ?", [res]).fetchall():
+            cell_ref_by_loc[loc_ref] = h3_to_ref.get(h3, -1)
+        put(f"loc:cellRef:{res}", cell_ref_by_loc)
+
     for res in res_list:
         size = con.execute("SELECT MAX(cell_ref) + 1 FROM occ.zone_meta WHERE res = ?", [res]).fetchone()[0]
         log(f"packing zones res {res} ({size} cell refs)...")

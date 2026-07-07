@@ -44,6 +44,7 @@ from typing import Optional
 
 import duckdb
 
+from generate_data import get_duckdb_max_temp_directory_size
 from utils import format_duration
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -632,6 +633,12 @@ def build(
     if memory_limit:
         con.execute(f"SET memory_limit = '{memory_limit}'")
     con.execute("SET preserve_insertion_order = false")
+    # DuckDB's own temp cap is computed from a conservative view of free disk
+    # (macOS counts purgeable snapshot space as used); the big TSV scans spill
+    # ~100 GiB, so size the cap from the real free space like generate_data does.
+    max_temp_directory_size = get_duckdb_max_temp_directory_size(duck_temp)
+    if max_temp_directory_size:
+        con.execute(f"SET max_temp_directory_size = '{max_temp_directory_size}'")
     con.execute("INSTALL h3 FROM community; LOAD h3;")
     con.execute("INSTALL sqlite; LOAD sqlite;")
 
