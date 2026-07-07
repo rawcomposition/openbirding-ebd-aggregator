@@ -14,6 +14,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -67,21 +68,29 @@ def send_notification(
         pass  # Silently ignore notification failures
 
 
-def get_month_options() -> list[tuple[str, str, str]]:
+def get_month_options(now: Optional[datetime] = None) -> list[tuple[str, str, str]]:
     """
-    Get the 3 most recent months as options.
+    Get the 2 most recent released dataset months as options.
     Returns list of (display_name, month_abbrev, year) tuples.
     """
     from dateutil.relativedelta import relativedelta
 
-    options = []
-    now = datetime.now()
+    now = now or datetime.now()
+    latest_release = (
+        now - relativedelta(months=1)
+        if now.day >= 15
+        else now - relativedelta(months=2)
+    )
+    previous_release = latest_release - relativedelta(months=1)
 
-    for i in range(3):
-        date = now - relativedelta(months=i)
+    options = []
+    for label, date in (
+        ("Current", latest_release),
+        ("Previous", previous_release),
+    ):
         month_abbrev = date.strftime("%b")
         year = date.strftime("%Y")
-        options.append((f"{month_abbrev} {year}", month_abbrev, year))
+        options.append((f"{label} ({month_abbrev} {year})", month_abbrev, year))
 
     return options
 
@@ -215,7 +224,7 @@ def run_download(paths: dict) -> bool:
         if tar_file.exists():
             tar_file.unlink()
         print("\nDownload failed. The dataset may not be available yet.")
-        print("eBird releases datasets around mid-month.")
+        print("eBird releases the previous month's dataset on the 15th.")
         return False
     except FileNotFoundError:
         print("\nError: aria2c not found. Install it with: brew install aria2")
@@ -386,7 +395,7 @@ def run_download_sampling(paths: dict) -> bool:
         if tar_file.exists():
             tar_file.unlink()
         print("\nDownload failed. The dataset may not be available yet.")
-        print("eBird releases datasets around mid-month.")
+        print("eBird releases the previous month's dataset on the 15th.")
         return False
     except FileNotFoundError:
         print("\nError: aria2c not found. Install it with: brew install aria2")
@@ -1186,10 +1195,7 @@ def main():
     month_options = get_month_options()
     month_display = [opt[0] for opt in month_options]
 
-    month_idx = prompt_choice(
-        "Which dataset do you want to use? Some may not be available yet.",
-        month_display
-    )
+    month_idx = prompt_choice("Which released dataset do you want to use?", month_display)
     _, month_abbrev, year = month_options[month_idx]
     paths = get_file_paths(month_abbrev, year, datasets_dir, outputs_dir)
 

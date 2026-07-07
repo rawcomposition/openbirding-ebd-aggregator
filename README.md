@@ -57,7 +57,7 @@ to activate the virtual environment first.
 
 The CLI will prompt you to:
 
-1. Choose which dataset to use (current or previous month)
+1. Choose which dataset to use (`Current` or `Previous`)
 2. Choose which step to run:
    - **Download Species** - Download the eBird Basic Dataset
    - **Extract Species** - Extract the gzipped species data from the tar
@@ -78,6 +78,10 @@ The CLI will prompt you to:
      admin API — no restart needed
 
 Each step skips automatically if its output file already exists.
+
+Dataset release schedule: eBird publishes the previous month's dataset on the
+15th of the current month. For example, the June dataset becomes the `Current`
+option on July 15, and before July 15 the `Current` option remains May.
 
 ### Output Structure
 

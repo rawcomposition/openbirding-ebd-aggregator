@@ -77,6 +77,10 @@ FREQUENCY_BUCKETS = [0.05, 0.1, 0.2, 0.3, 0.5]
 # index (res 5/6 were ~85% of zone rows) for zoom levels the map never uses.
 DEFAULT_ZONE_RESOLUTIONS = [3, 4]
 
+# Tables that should pass through unchanged from targets.db when present. This
+# keeps citation/export metadata in sync across the companion databases.
+OPTIONAL_SOURCE_TABLES = ("citation_metadata",)
+
 
 def log(msg: str):
     print(f"[occurrences] {datetime.now().strftime('%H:%M:%S')} {msg}")
@@ -86,6 +90,40 @@ def log(msg: str):
 def bucket_level_expr(score_expr: str) -> str:
     """(# thresholds <= score) - 1, i.e. the highest bucket index met."""
     return "(" + " + ".join(f"({score_expr} >= {t})" for t in FREQUENCY_BUCKETS) + " - 1)"
+
+
+def copy_source_table(db: sqlite3.Connection, source_schema: str, table_name: str) -> bool:
+    """Clone an optional source table's schema, rows, and explicit indexes."""
+    row = db.execute(
+        f"""
+        SELECT sql
+        FROM {source_schema}.sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        (table_name,),
+    ).fetchone()
+    if row is None:
+        return False
+    if row[0] is None:
+        raise SystemExit(f"Source table {table_name} has no CREATE TABLE SQL to copy")
+
+    log(f"Copying {table_name}...")
+    db.execute(f'DROP TABLE IF EXISTS main."{table_name}"')
+    db.execute(row[0])
+    db.execute(f'INSERT INTO "{table_name}" SELECT * FROM {source_schema}."{table_name}"')
+
+    for (index_sql,) in db.execute(
+        f"""
+        SELECT sql
+        FROM {source_schema}.sqlite_master
+        WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL
+        ORDER BY name
+        """,
+        (table_name,),
+    ):
+        db.execute(index_sql)
+
+    return True
 
 
 # --- Row tables (plain SQLite; the SQL mirrors the original TS build) ---------
@@ -259,6 +297,8 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
             LOC_MIN_CHECKLISTS,
         ),
     )
+    for table_name in OPTIONAL_SOURCE_TABLES:
+        copy_source_table(db, "t", table_name)
 
     log("Copying species...")
     db.executescript(
