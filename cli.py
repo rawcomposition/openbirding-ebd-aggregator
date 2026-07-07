@@ -29,6 +29,7 @@ from utils import load_env_file
 
 # Get script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
+PYTHON = sys.executable
 
 
 def get_output_paths(env_vars: dict) -> tuple[Path, Path, Path, Path]:
@@ -324,7 +325,7 @@ def run_filter(paths: dict) -> bool:
         subprocess.run(
             [
                 "caffeinate", "-dims",
-                "python3", str(extract_script),
+                PYTHON, str(extract_script),
                 str(txt_gz_file),
                 str(filtered_file),
             ],
@@ -495,7 +496,7 @@ def run_filter_sampling(paths: dict) -> bool:
         subprocess.run(
             [
                 "caffeinate", "-dims",
-                "python3", str(extract_script),
+                PYTHON, str(extract_script),
                 str(txt_gz_file),
                 str(filtered_file),
             ],
@@ -561,7 +562,7 @@ def run_build_db(paths: dict, env_vars: dict) -> bool:
 
     cmd = [
         "caffeinate", "-dims",
-        "python3", str(generate_script),
+        PYTHON, str(generate_script),
         str(filtered_file),
         str(sampling_file),
         str(db_file),
@@ -627,7 +628,7 @@ def run_build_h3(paths: dict, env_vars: dict) -> bool:
 
     cmd = [
         "caffeinate", "-dims",
-        "python3", str(generate_script),
+        PYTHON, str(generate_script),
         str(filtered_file),
         str(sampling_file),
         str(db_file),
@@ -674,7 +675,7 @@ def run_build_occurrences(paths: dict, env_vars: dict) -> bool:
 
     cmd = [
         "caffeinate", "-dims",
-        "python3", str(SCRIPT_DIR / "generate_occurrences.py"),
+        PYTHON, str(SCRIPT_DIR / "generate_occurrences.py"),
         str(db_file),
         str(occ_file),
     ]
@@ -721,7 +722,7 @@ def run_generate_packs(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
 
     cmd = [
         "caffeinate", "-dims",
-        "python3", str(generate_script),
+        PYTHON, str(generate_script),
         str(db_file),
         "--output-dir", str(packs_dir),
     ]
@@ -784,7 +785,7 @@ def run_upload_packs(
     upload_script = SCRIPT_DIR / "upload_packs.py"
 
     cmd = [
-        "python3", str(upload_script),
+        PYTHON, str(upload_script),
         str(packs_dir),
         pack_version,
     ]
@@ -846,7 +847,7 @@ def run_generate_beta_packs(
 
     cmd = [
         "caffeinate", "-dims",
-        "python3", str(generate_script),
+        PYTHON, str(generate_script),
         str(db_file),
         "--output-dir", str(beta_packs_dir),
         "--beta",
@@ -913,7 +914,7 @@ def run_upload_beta_packs(env_vars: dict, beta_packs_dir: Path) -> bool:
     upload_script = SCRIPT_DIR / "upload_packs.py"
 
     cmd = [
-        "python3", str(upload_script),
+        PYTHON, str(upload_script),
         str(beta_packs_dir),
         "beta",
         "--prefix", beta_prefix,
