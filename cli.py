@@ -935,16 +935,29 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     Returns True if successful, False otherwise.
     """
     db_file = paths["db"]
+    occ_file = paths.get("occurrences_db")
 
     print("\n" + "-" * 50)
     print("Step: Upload SQLite Database")
     print("-" * 50)
     sys.stdout.flush()
 
-    if not db_file.exists():
-        print(f"\nError: Database file not found: {db_file}")
+    targets_available = db_file.exists()
+    occ_available = bool(occ_file and occ_file.exists())
+
+    if not targets_available and not occ_available:
+        print("\nError: No database files found to upload.")
+        print(f"  targets:     {db_file}")
+        if occ_file:
+            print(f"  occurrences: {occ_file}")
         print("Please run the build database step first.")
         return False
+
+    if not targets_available:
+        print(
+            f"\nNote: targets database not found ({db_file}); "
+            "uploading occurrences.db only."
+        )
 
     # Check for SSH config
     ssh_user = env_vars.get("SSH_USER")
@@ -969,7 +982,9 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
         print(f"\nError: Missing config in .env: {', '.join(missing)}")
         return False
 
-    print(f"\nDatabase: {db_file}")
+    print()
+    if targets_available:
+        print(f"Database: {db_file}")
     print(f"Remote: {ssh_user}@{ssh_host}")
     print(f"Docker volume: {docker_volume}")
     print()
@@ -981,9 +996,8 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
 
     # Stage the companion occurrences.db as .new (does not affect the running
     # app); the swap-occurrences-db admin call below hot-reloads it.
-    occ_file = paths.get("occurrences_db")
     occ_uploaded = False
-    if occ_file and occ_file.exists():
+    if occ_available:
         print("\nUploading to occurrences.db.new...")
         sys.stdout.flush()
         occ_cmd = (
@@ -1000,64 +1014,71 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     else:
         print("\nNote: no occurrences.db built for this month — skipping its upload.")
 
-    # Upload to targets.db.new (does not affect the running app)
-    print("\nUploading to targets.db.new...")
-    sys.stdout.flush()
+    # Upload targets.db + swap it in. Skipped entirely when no targets db was
+    # built this run — the occurrences.db above is still uploaded and swapped
+    # by the shared tail below.
+    if targets_available:
+        # Upload to targets.db.new (does not affect the running app)
+        print("\nUploading to targets.db.new...")
+        sys.stdout.flush()
 
-    cmd = (
-        f"pv \"{db_file}\" | ssh {ssh_user}@{ssh_host} "
-        f"\"docker run --rm -i -v {docker_volume}:/data alpine "
-        f"sh -c 'cat > /data/targets.db.new'\""
-    )
-
-    try:
-        subprocess.run(cmd, shell=True, check=True)
-        print("\nUpload complete!")
-    except subprocess.CalledProcessError as e:
-        print(f"\nSQLite upload failed: {e}")
-        return False
-
-    # Trigger zero-downtime swap via admin API
-    print("\nSwapping targets database...")
-    sys.stdout.flush()
-
-    swap_url = db_swap_endpoint
-    try:
-        resp = requests.post(
-            swap_url,
-            headers={"Authorization": f"Bearer {api_token}"},
-            timeout=120,
+        cmd = (
+            f"pv \"{db_file}\" | ssh {ssh_user}@{ssh_host} "
+            f"\"docker run --rm -i -v {docker_volume}:/data alpine "
+            f"sh -c 'cat > /data/targets.db.new'\""
         )
+
         try:
-            result = resp.json()
-        except ValueError:
-            body = resp.text.strip()
-            if len(body) > 500:
-                body = body[:500] + "..."
-            print(
-                f"\nSwap failed ({resp.status_code}): "
-                "admin API returned a non-JSON response. "
-                "The uploaded database is still staged as /data/targets.db.new."
-            )
-            if body:
-                print(body)
+            subprocess.run(cmd, shell=True, check=True)
+            print("\nUpload complete!")
+        except subprocess.CalledProcessError as e:
+            print(f"\nSQLite upload failed: {e}")
             return False
-        if resp.status_code == 200 and result.get("ok"):
-            print(f"Database swapped successfully! Version: {result.get('version')}")
-            if occ_uploaded:
-                return swap_occurrences_db(db_swap_endpoint, api_token)
-            return True
-        else:
-            print(
-                f"\nSwap failed ({resp.status_code}): "
-                f"{result.get('error', resp.text)} "
-                "(uploaded database remains staged as /data/targets.db.new)"
+
+        # Trigger zero-downtime swap via admin API
+        print("\nSwapping targets database...")
+        sys.stdout.flush()
+
+        swap_url = db_swap_endpoint
+        try:
+            resp = requests.post(
+                swap_url,
+                headers={"Authorization": f"Bearer {api_token}"},
+                timeout=120,
             )
+            try:
+                result = resp.json()
+            except ValueError:
+                body = resp.text.strip()
+                if len(body) > 500:
+                    body = body[:500] + "..."
+                print(
+                    f"\nSwap failed ({resp.status_code}): "
+                    "admin API returned a non-JSON response. "
+                    "The uploaded database is still staged as /data/targets.db.new."
+                )
+                if body:
+                    print(body)
+                return False
+            if resp.status_code == 200 and result.get("ok"):
+                print(f"Database swapped successfully! Version: {result.get('version')}")
+            else:
+                print(
+                    f"\nSwap failed ({resp.status_code}): "
+                    f"{result.get('error', resp.text)} "
+                    "(uploaded database remains staged as /data/targets.db.new)"
+                )
+                return False
+        except requests.RequestException as e:
+            print(f"\nSwap request failed: {e}")
+            print("The uploaded database remains staged as /data/targets.db.new.")
             return False
-    except requests.RequestException as e:
-        print(f"\nSwap request failed: {e}")
-        print("The uploaded database remains staged as /data/targets.db.new.")
-        return False
+
+    # Hot-reload the staged occurrences.db (uploaded above). Runs whether or not
+    # targets was part of this upload.
+    if occ_uploaded:
+        return swap_occurrences_db(db_swap_endpoint, api_token)
+    return True
 
 
 def swap_occurrences_db(db_swap_endpoint: str, api_token: str) -> bool:
