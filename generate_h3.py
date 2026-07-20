@@ -690,15 +690,14 @@ def build(
     sq.execute("ANALYZE h3_cell_obs")
     sq.execute("ANALYZE h3_cell_samples")
     sq.commit()
-    # Rebuilding into an existing file frees the old h3 tables' pages, but
-    # SQLite keeps them on its freelist — the file never shrinks on its own.
-    # Compact when a meaningful share of the file is free (fresh monthly
-    # builds skip this; a re-run that dropped resolutions reclaims the space).
+    # Finalize by compacting. Always VACUUM: the WITHOUT ROWID obs tables aren't
+    # filled in key order, so pages settle ~12% under-full even on a clean pass —
+    # slack that freelist_count can't see. VACUUM packs it out and reclaims the
+    # freelist too.
     freelist = sq.execute("PRAGMA freelist_count").fetchone()[0]
     page_count = sq.execute("PRAGMA page_count").fetchone()[0]
-    if page_count and freelist / page_count > 0.05:
-        print(f"  - vacuuming ({freelist:,} of {page_count:,} pages free)...")
-        sq.execute("VACUUM")
+    print(f"  - vacuuming ({freelist:,} of {page_count:,} pages on freelist)...")
+    sq.execute("VACUUM")
     sq.close()
     for stats in all_stats:
         print(
