@@ -291,6 +291,19 @@ def run_extract(paths: dict) -> bool:
         return False
 
 
+def delete_original_dataset(txt_gz_file: Path) -> None:
+    """
+    Delete the original gzipped dataset if ORIGINAL_DATASETS=DELETE in .env.
+    Defaults to KEEP.
+    """
+    mode = load_env_file().get("ORIGINAL_DATASETS", "KEEP").upper()
+    if mode == "DELETE":
+        txt_gz_file.unlink()
+        print(f"Deleted original dataset: {txt_gz_file}")
+    else:
+        print(f"Kept original dataset: {txt_gz_file}")
+
+
 def run_filter(paths: dict) -> bool:
     """
     Filter the dataset to extract required columns.
@@ -333,10 +346,9 @@ def run_filter(paths: dict) -> bool:
         )
         print("\nFiltering complete!")
 
-        # Free up disk space: the gzipped source is no longer needed now that
-        # the filtered version exists.
-        txt_gz_file.unlink()
-        print(f"Deleted original dataset: {txt_gz_file}")
+        # Optionally free up disk space: the gzipped source is no longer needed
+        # now that the filtered version exists.
+        delete_original_dataset(txt_gz_file)
 
         return True
     except subprocess.CalledProcessError as e:
@@ -504,10 +516,9 @@ def run_filter_sampling(paths: dict) -> bool:
         )
         print("\nFiltering complete!")
 
-        # Free up disk space: the gzipped source is no longer needed now that
-        # the filtered version exists.
-        txt_gz_file.unlink()
-        print(f"Deleted original dataset: {txt_gz_file}")
+        # Optionally free up disk space: the gzipped source is no longer needed
+        # now that the filtered version exists.
+        delete_original_dataset(txt_gz_file)
 
         return True
     except subprocess.CalledProcessError as e:
