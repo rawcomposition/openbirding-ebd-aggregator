@@ -10,8 +10,8 @@ built from the same extracted file.
 
 Drops exotic ("X") records and spuhs, slashes, and hybrids. Sub-species taxa
 (issf, form, intergrade, domestic) are kept; the EBD reports them under their
-parent species' SCIENTIFIC NAME. Any that don't roll up to a species (e.g.
-undescribed forms) are dropped when generate_data.py joins to the taxonomy.
+parent species' SCIENTIFIC NAME. Forms without a parent species (e.g.
+undescribed forms) keep their own name and are treated as species.
 
 Also writes a small taxa file next to the output listing the distinct taxa
 seen, which generate_data.py uses to pick the matching eBird taxonomy version.

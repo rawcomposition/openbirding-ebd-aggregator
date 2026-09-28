@@ -202,10 +202,15 @@ def check_ebd_rollup(ebd_taxa: dict, taxonomy: list) -> None:
 
 def write_species_table(sqlite_con: sqlite3.Connection, taxonomy: list) -> int:
     """
-    Insert the species from an eBird taxonomy into the species table.
+    Insert the species from an eBird taxonomy into the species table, plus
+    forms that don't roll up to a species (e.g. undescribed forms).
     Returns the number of species inserted.
     """
-    taxonomy = [t for t in taxonomy if t["category"] == "species"]
+    taxonomy = [
+        t for t in taxonomy
+        if t["category"] == "species"
+        or (t["category"] == "form" and not t.get("reportAs"))
+    ]
 
     # Create species table
     sqlite_con.execute("DROP TABLE IF EXISTS species")
