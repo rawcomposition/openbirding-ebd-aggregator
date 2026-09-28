@@ -8,6 +8,11 @@ making subsequent processing faster and requiring less disk space.
 Keeps all complete checklists so hotspot and region aggregates can both be
 built from the same extracted file.
 
+Scientific names are normalized to the species level using the eBird taxonomy:
+species are kept as-is, other taxa (subspecies groups, forms, etc.) are rolled
+up to their reportAs species, and taxa with neither (spuhs, slashes, hybrids,
+undescribed forms) are dropped. Exotic ("X") records are also dropped.
+
 Usage:
     python extract_columns.py <input.txt.gz> <output.tsv>
 
@@ -21,6 +26,8 @@ import sys
 import time
 from pathlib import Path
 
+import requests
+
 from utils import format_duration, format_size
 
 # Columns needed by generate_data.py
@@ -32,8 +39,26 @@ REQUIRED_COLUMNS = [
     "SCIENTIFIC NAME",
 ]
 
-# Valid category values (set for O(1) lookup)
-VALID_CATEGORIES = frozenset(("species", "issf"))
+TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json"
+
+
+def load_species_names() -> dict:
+    """
+    Map each countable taxon's scientific name to its species-level scientific
+    name. Species map to themselves; other taxa map to their reportAs species.
+    """
+    response = requests.get(TAXONOMY_URL, timeout=60)
+    response.raise_for_status()
+    taxonomy = response.json()
+
+    sci_name_by_code = {t["speciesCode"]: t["sciName"] for t in taxonomy}
+    species_names = {}
+    for t in taxonomy:
+        if t["category"] == "species":
+            species_names[t["sciName"]] = t["sciName"]
+        elif t.get("reportAs"):
+            species_names[t["sciName"]] = sci_name_by_code[t["reportAs"]]
+    return species_names
 
 
 def extract_columns(input_file: Path, output_file: Path) -> None:
@@ -54,6 +79,9 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print(f"Input: {input_file}")
     print(f"Output: {output_file}")
     print(f"Extracting columns: {', '.join(REQUIRED_COLUMNS)}")
+
+    species_names = load_species_names()
+    print(f"Loaded {len(species_names):,} taxon names from eBird taxonomy")
     print()
 
     # Use pigz for parallel decompression (much faster than Python's gzip)
@@ -78,7 +106,8 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
 
         # Find indices for filter columns
         all_species_idx = header_cols.index("ALL SPECIES REPORTED")
-        category_idx = header_cols.index("CATEGORY")
+        exotic_idx = header_cols.index("EXOTIC CODE")
+        sci_name_idx = header_cols.index("SCIENTIFIC NAME")
 
         # Write header
         outfile.write("\t".join(REQUIRED_COLUMNS) + "\n")
@@ -87,11 +116,16 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         for line_bytes in proc.stdout:
             cols = line_bytes.decode("utf-8", errors="replace").rstrip("\n").split("\t")
 
-            # Filter: complete checklists, species/issf only
-            if (cols[all_species_idx] != "1" or
-                cols[category_idx] not in VALID_CATEGORIES):
+            # Filter: complete checklists, non-escapees, species-level taxa only
+            if cols[all_species_idx] != "1" or cols[exotic_idx] == "X":
                 rows_skipped += 1
                 continue
+
+            species_name = species_names.get(cols[sci_name_idx])
+            if species_name is None:
+                rows_skipped += 1
+                continue
+            cols[sci_name_idx] = species_name
 
             # Extract only required columns
             outfile.write("\t".join(cols[i] for i in col_indices) + "\n")
@@ -117,7 +151,7 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print("=" * 50)
     print(f"Total rows read: {total_rows:,}")
     print(f"Rows written: {rows_processed:,}")
-    print(f"Rows skipped (incomplete/non-species): {rows_skipped:,}")
+    print(f"Rows skipped (incomplete/exotic/non-species): {rows_skipped:,}")
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
     print(f"\nOutput written to: {output_file}")
