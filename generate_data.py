@@ -32,7 +32,7 @@ from typing import Optional
 import duckdb
 import requests
 
-from utils import format_duration
+from utils import format_duration, taxa_file_path
 
 
 KiB = 1024
@@ -106,26 +106,106 @@ def open_sqlite_build_connection(
     return sqlite_con
 
 
-def fetch_taxonomy_version() -> str:
-    """Fetch the current eBird taxonomy authority version (e.g. "2025.0")."""
-    url = "https://api.ebird.org/v2/ref/taxonomy/versions?fmt=json"
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    versions = response.json()
-    latest = next(v for v in versions if v.get("latest"))
-    return str(latest["authorityVer"])
+TAXONOMY_API_URL = "https://api.ebird.org/v2/ref/taxonomy"
 
 
-def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
+def load_ebd_taxa(taxa_file: Path) -> dict:
     """
-    Download eBird taxonomy and insert into species table.
+    Read the taxa file written by extract_columns.py.
+    Returns {category: {scientific name: taxonomic order}}.
+    """
+    taxa_by_category = {}
+    with open(taxa_file, encoding="utf-8") as f:
+        next(f)  # header
+        for line in f:
+            category, sci_name, taxon_order = line.rstrip("\n").split("\t")
+            taxa_by_category.setdefault(category, {})[sci_name] = taxon_order
+    return taxa_by_category
+
+
+def fetch_taxonomy(version: str) -> list:
+    """Fetch the full eBird taxonomy (all categories) for a given version."""
+    response = requests.get(
+        f"{TAXONOMY_API_URL}/ebird?fmt=json&version={version}", timeout=60
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def select_taxonomy(ebd_taxa: dict) -> tuple:
+    """
+    Pick the eBird taxonomy version the EBD was built on.
+
+    Taxonomic order is renumbered in every taxonomy release, so the EBD matches
+    a version only if every EBD species has the same scientific name and
+    taxonomic order in it. Tries the latest version, then the one before it.
+    Anything else means our assumptions are wrong, so it fails loudly.
+
+    Returns (version, taxonomy).
+    """
+    response = requests.get(f"{TAXONOMY_API_URL}/versions?fmt=json", timeout=60)
+    response.raise_for_status()
+    versions = sorted(
+        (v["authorityVer"] for v in response.json()), reverse=True
+    )[:2]
+
+    ebd_species = ebd_taxa.get("species", {})
+    if not ebd_species:
+        raise RuntimeError("Taxa file contains no species")
+
+    for version in versions:
+        taxonomy = fetch_taxonomy(version)
+        taxon_orders = {
+            t["sciName"]: t["taxonOrder"]
+            for t in taxonomy
+            if t["category"] == "species"
+        }
+        mismatches = sorted(
+            name
+            for name, taxon_order in ebd_species.items()
+            if taxon_orders.get(name) != float(taxon_order)
+        )
+        if not mismatches:
+            return str(version), taxonomy
+        print(
+            f"  Taxonomy {version} does not match {len(mismatches):,} of "
+            f"{len(ebd_species):,} EBD species (e.g. {', '.join(mismatches[:5])})"
+        )
+
+    raise RuntimeError(
+        f"EBD species do not match taxonomy versions {versions}. "
+        "Check how the taxonomy version is selected."
+    )
+
+
+def check_ebd_rollup(ebd_taxa: dict, taxonomy: list) -> None:
+    """
+    Fail if the EBD reports sub-species taxa (issf, form, etc.) by their own
+    scientific name instead of their parent species', since those rows would
+    silently fail to join to the species table.
+    """
+    species_names = {t["sciName"] for t in taxonomy if t["category"] == "species"}
+    report_as_names = {t["sciName"] for t in taxonomy if t.get("reportAs")}
+    unrolled = sorted(
+        name
+        for category, taxa in ebd_taxa.items()
+        if category != "species"
+        for name in taxa
+        if name not in species_names and name in report_as_names
+    )
+    if unrolled:
+        raise RuntimeError(
+            f"{len(unrolled):,} EBD sub-species taxa are not rolled up to their "
+            f"species (e.g. {', '.join(unrolled[:5])}). Update the rollup logic."
+        )
+
+
+def write_species_table(sqlite_con: sqlite3.Connection, taxonomy: list) -> int:
+    """
+    Insert the species from an eBird taxonomy into the species table.
     Returns the number of species inserted.
     """
-    url = "https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json&cat=species"
-
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    taxonomy = response.json()
+    taxonomy = [t for t in taxonomy if t["category"] == "species"]
 
     # Create species table
     sqlite_con.execute("DROP TABLE IF EXISTS species")
@@ -219,13 +299,15 @@ def build_database(
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Downloading eBird taxonomy...")
     step_start = time.time()
+    ebd_taxa = load_ebd_taxa(taxa_file_path(species_file))
+    taxonomy_version, taxonomy = select_taxonomy(ebd_taxa)
+    check_ebd_rollup(ebd_taxa, taxonomy)
     sqlite_con = open_sqlite_build_connection(
         output_db,
         initialize_page_size=initialize_page_size,
     )
-    taxonomy_count = download_taxonomy(sqlite_con)
+    taxonomy_count = write_species_table(sqlite_con, taxonomy)
     sqlite_con.close()
-    taxonomy_version = fetch_taxonomy_version()
     print(f"  Downloaded {taxonomy_count:,} species (taxonomy {taxonomy_version}, {format_duration(time.time() - step_start)})")
 
     # Create the final tables up front so DuckDB can insert rows in primary-key
@@ -765,6 +847,12 @@ Examples:
 
     if not args.species_file.exists():
         print(f"Error: Species file not found: {args.species_file}", file=sys.stderr)
+        sys.exit(1)
+
+    taxa_file = taxa_file_path(args.species_file)
+    if not taxa_file.exists():
+        print(f"Error: Taxa file not found: {taxa_file}", file=sys.stderr)
+        print("Re-run the species filter step to generate it.", file=sys.stderr)
         sys.exit(1)
 
     if not args.sampling_file.exists():

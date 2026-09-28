@@ -28,6 +28,11 @@ def format_size(bytes_count: int) -> str:
     return f"{bytes_count:.1f} PB"
 
 
+def taxa_file_path(filtered_file: Path) -> Path:
+    """Path of the taxa file written alongside a filtered species file."""
+    return filtered_file.with_suffix(".taxa.tsv")
+
+
 def load_env_file(env_path: Path = None) -> dict:
     """
     Load environment variables from .env file.

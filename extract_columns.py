@@ -8,10 +8,13 @@ making subsequent processing faster and requiring less disk space.
 Keeps all complete checklists so hotspot and region aggregates can both be
 built from the same extracted file.
 
-Scientific names are normalized to the species level using the eBird taxonomy:
-species are kept as-is, other taxa (subspecies groups, forms, etc.) are rolled
-up to their reportAs species, and taxa with neither (spuhs, slashes, hybrids,
-undescribed forms) are dropped. Exotic ("X") records are also dropped.
+Drops exotic ("X") records and spuhs, slashes, and hybrids. Sub-species taxa
+(issf, form, intergrade, domestic) are kept; the EBD reports them under their
+parent species' SCIENTIFIC NAME. Any that don't roll up to a species (e.g.
+undescribed forms) are dropped when generate_data.py joins to the taxonomy.
+
+Also writes a small taxa file next to the output listing the distinct taxa
+seen, which generate_data.py uses to pick the matching eBird taxonomy version.
 
 Usage:
     python extract_columns.py <input.txt.gz> <output.tsv>
@@ -26,9 +29,7 @@ import sys
 import time
 from pathlib import Path
 
-import requests
-
-from utils import format_duration, format_size
+from utils import format_duration, format_size, taxa_file_path
 
 # Columns needed by generate_data.py
 REQUIRED_COLUMNS = [
@@ -39,26 +40,8 @@ REQUIRED_COLUMNS = [
     "SCIENTIFIC NAME",
 ]
 
-TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=json"
-
-
-def load_species_names() -> dict:
-    """
-    Map each countable taxon's scientific name to its species-level scientific
-    name. Species map to themselves; other taxa map to their reportAs species.
-    """
-    response = requests.get(TAXONOMY_URL, timeout=60)
-    response.raise_for_status()
-    taxonomy = response.json()
-
-    sci_name_by_code = {t["speciesCode"]: t["sciName"] for t in taxonomy}
-    species_names = {}
-    for t in taxonomy:
-        if t["category"] == "species":
-            species_names[t["sciName"]] = t["sciName"]
-        elif t.get("reportAs"):
-            species_names[t["sciName"]] = sci_name_by_code[t["reportAs"]]
-    return species_names
+# Categories that can roll up to a species
+VALID_CATEGORIES = ("species", "issf", "form", "intergrade", "domestic")
 
 
 def extract_columns(input_file: Path, output_file: Path) -> None:
@@ -79,10 +62,10 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print(f"Input: {input_file}")
     print(f"Output: {output_file}")
     print(f"Extracting columns: {', '.join(REQUIRED_COLUMNS)}")
-
-    species_names = load_species_names()
-    print(f"Loaded {len(species_names):,} taxon names from eBird taxonomy")
     print()
+
+    # category -> {scientific name: taxonomic order}, for the taxa file
+    taxa_by_category = {category: {} for category in VALID_CATEGORIES}
 
     # Use pigz for parallel decompression (much faster than Python's gzip)
     proc = subprocess.Popen(
@@ -107,7 +90,9 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         # Find indices for filter columns
         all_species_idx = header_cols.index("ALL SPECIES REPORTED")
         exotic_idx = header_cols.index("EXOTIC CODE")
+        category_idx = header_cols.index("CATEGORY")
         sci_name_idx = header_cols.index("SCIENTIFIC NAME")
+        taxon_order_idx = header_cols.index("TAXONOMIC ORDER")
 
         # Write header
         outfile.write("\t".join(REQUIRED_COLUMNS) + "\n")
@@ -116,16 +101,19 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         for line_bytes in proc.stdout:
             cols = line_bytes.decode("utf-8", errors="replace").rstrip("\n").split("\t")
 
-            # Filter: complete checklists, non-escapees, species-level taxa only
+            # Filter: complete checklists, non-escapees, valid categories only
             if cols[all_species_idx] != "1" or cols[exotic_idx] == "X":
                 rows_skipped += 1
                 continue
 
-            species_name = species_names.get(cols[sci_name_idx])
-            if species_name is None:
+            taxa = taxa_by_category.get(cols[category_idx])
+            if taxa is None:
                 rows_skipped += 1
                 continue
-            cols[sci_name_idx] = species_name
+
+            sci_name = cols[sci_name_idx]
+            if sci_name not in taxa:
+                taxa[sci_name] = cols[taxon_order_idx]
 
             # Extract only required columns
             outfile.write("\t".join(cols[i] for i in col_indices) + "\n")
@@ -142,6 +130,13 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
 
     proc.wait()
 
+    taxa_file = taxa_file_path(output_file)
+    with open(taxa_file, "w", encoding="utf-8") as f:
+        f.write("CATEGORY\tSCIENTIFIC NAME\tTAXONOMIC ORDER\n")
+        for category, taxa in taxa_by_category.items():
+            for sci_name, taxon_order in taxa.items():
+                f.write(f"{category}\t{sci_name}\t{taxon_order}\n")
+
     # Final stats
     elapsed = time.time() - start_time
     output_size = output_file.stat().st_size
@@ -155,6 +150,7 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
     print(f"\nOutput written to: {output_file}")
+    print(f"Taxa written to: {taxa_file}")
 
 
 def main():
