@@ -1000,11 +1000,6 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     print(f"Docker volume: {docker_volume}")
     print()
 
-    response = input("Continue with upload and swap? [y/N] ").strip().lower()
-    if response != "y":
-        print("\nUpload cancelled.")
-        return False
-
     # Stage the companion occurrences.db as .new (does not affect the running
     # app); the swap-occurrences-db admin call below hot-reloads it.
     occ_uploaded = False
