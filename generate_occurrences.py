@@ -12,8 +12,19 @@ where qCount (species above a frequency threshold per location) is
 user-independent and precomputed here for a fixed set of threshold "buckets",
 so the API answers worldwide queries by scanning only the user's seen species.
 
+Month-filtered queries can't use qCount (a frequency averaged over an arbitrary
+set of months doesn't decompose into per-month counts), so the API answers them
+with SQL against two month tables instead, restricted to a required region:
+
+    loc_month_samples  (loc_ref, m1..m12)              checklists per month
+    loc_month_species  (loc_ref, species_id, m1..m12)  score per month, 0-127
+
+A species qualifies when its checklist-weighted average over the chosen months
+meets the threshold: sum(m_i * samples_i) >= threshold * 127 * sum(samples_i).
+
 Output tables: metadata, species, loc_meta, loc_species, loc_qcount,
-zone_meta, zone_species, zone_qcount — plus `blob_cache`, the same data
+loc_month_samples, loc_month_species, zone_meta, zone_species, zone_qcount —
+plus `blob_cache`, the same data
 pre-packed as little-endian typed-array BLOBs so the Node API loads its
 in-memory index with a few memcpy-speed reads (~0.5 s) instead of iterating
 tens of millions of rows (~60 s).
@@ -58,6 +69,18 @@ import numpy as np
 LOC_MIN_SCORE = 0.05
 LOC_MIN_CHECKLISTS = 25
 
+# Month queries sum checklists across the chosen months, so a lower floor still
+# yields a usable sample. loc_meta keeps hotspots down to this floor (with a
+# year total below it, no month selection can reach it); loc_species and the
+# blob cache's zone map stay at LOC_MIN_CHECKLISTS, so year results are unchanged.
+MONTH_MIN_CHECKLISTS = 10
+
+# Monthly scores are stored as integers 0-127, which SQLite packs into a single
+# byte (and 0 into none) — ~0.4 percentage points of precision, at under half
+# the size of REAL columns.
+MONTH_SCORE_SCALE = 127
+MONTHS = range(1, 13)
+
 # The zone (grid) frequency floor stays low and is NOT the hotspot presets: a
 # cell-level frequency is diluted by all the unrelated birding effort inside
 # the cell (and the dilution grows with cell size), so the grid answers "do
@@ -90,6 +113,11 @@ def log(msg: str):
 def bucket_level_expr(score_expr: str) -> str:
     """(# thresholds <= score) - 1, i.e. the highest bucket index met."""
     return "(" + " + ".join(f"({score_expr} >= {t})" for t in FREQUENCY_BUCKETS) + " - 1)"
+
+
+def month_columns(template: str) -> str:
+    """Comma-joined template expanded for each month, e.g. 'm{m}' -> 'm1, ..., m12'."""
+    return ", ".join(template.format(m=m) for m in MONTHS)
 
 
 def copy_source_table(db: sqlite3.Connection, source_schema: str, table_name: str) -> bool:
@@ -141,7 +169,7 @@ def build_h3_index(
        (target_res, child_cell_ref, parent_h3, parent_lat, parent_lng) for
        every h3_cells row at the finest resolution in targets.db.
     2. Per zone resolution, each hotspot's H3 cell: (location_id, h3), for the
-       same hotspots loc_meta will keep (>= LOC_MIN_CHECKLISTS total checklists).
+       same hotspots loc_species covers (>= LOC_MIN_CHECKLISTS total checklists).
        Precomputed so the API's "named hotspots per cell" lookup never needs
        H3 coordinate math (or an h3-js dependency) at request time.
     """
@@ -207,7 +235,8 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
           version TEXT, version_year TEXT, version_month TEXT,
           taxonomy_version TEXT,
           generated_at TEXT, buckets TEXT,
-          min_score REAL, min_checklists INTEGER
+          min_score REAL, min_checklists INTEGER,
+          month_min_checklists INTEGER, month_score_scale INTEGER
         );
 
         CREATE TABLE species (
@@ -282,12 +311,27 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
         ) WITHOUT ROWID;
         """
     )
+    db.executescript(
+        f"""
+        CREATE TABLE loc_month_samples (
+          loc_ref INTEGER PRIMARY KEY,
+          {month_columns('m{m} INTEGER NOT NULL')}
+        );
+
+        CREATE TABLE loc_month_species (
+          loc_ref INTEGER NOT NULL,
+          species_id INTEGER NOT NULL,
+          {month_columns('m{m} INTEGER NOT NULL')},
+          PRIMARY KEY (loc_ref, species_id)
+        ) WITHOUT ROWID;
+        """
+    )
 
     meta = db.execute(
         "SELECT version, version_year, version_month, taxonomy_version FROM t.metadata"
     ).fetchone()
     db.execute(
-        "INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             meta[0],
             meta[1],
@@ -297,6 +341,8 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
             json.dumps(FREQUENCY_BUCKETS),
             LOC_MIN_SCORE,
             LOC_MIN_CHECKLISTS,
+            MONTH_MIN_CHECKLISTS,
+            MONTH_SCORE_SCALE,
         ),
     )
     for table_name in OPTIONAL_SOURCE_TABLES:
@@ -330,7 +376,7 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
           SELECT location_id, MAX(samples) AS total_samples
           FROM t.year_obs
           GROUP BY location_id
-          HAVING total_samples >= {LOC_MIN_CHECKLISTS}
+          HAVING total_samples >= {MONTH_MIN_CHECKLISTS}
         ) ls
         JOIN t.hotspots h ON h.id = ls.location_id
         """
@@ -361,7 +407,7 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
         SELECT yo.species_id, m.loc_ref, {bucket_level_expr('yo.score')}
         FROM t.year_obs yo
         JOIN loc_meta m ON m.location_id = yo.location_id
-        WHERE yo.score >= {LOC_MIN_SCORE}
+        WHERE yo.score >= {LOC_MIN_SCORE} AND m.samples >= {LOC_MIN_CHECKLISTS}
         """
     )
     log(f"  loc_species: {db.execute('SELECT COUNT(*) FROM loc_species').fetchone()[0]}")
@@ -376,6 +422,35 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
             """,
             (bucket, bucket),
         )
+
+    # samples is constant per (location, month) in month_obs; MAX picks it out.
+    log("Building loc_month_samples...")
+    db.execute(
+        f"""
+        INSERT INTO loc_month_samples (loc_ref, {month_columns('m{m}')})
+        SELECT m.loc_ref, {month_columns('MAX(CASE WHEN mo.month = {m} THEN mo.samples ELSE 0 END)')}
+        FROM t.month_obs mo
+        JOIN loc_meta m ON m.location_id = mo.location_id
+        GROUP BY m.loc_ref
+        """
+    )
+
+    # A species whose best month is below LOC_MIN_SCORE can't average above it
+    # over any selection of months, so those pairs are dropped.
+    log("Building loc_month_species (the other big one)...")
+    db.execute(
+        f"""
+        INSERT INTO loc_month_species (loc_ref, species_id, {month_columns('m{m}')})
+        SELECT m.loc_ref, mo.species_id,
+               {month_columns(f'MAX(CASE WHEN mo.month = {{m}} THEN CAST(ROUND(mo.score * {MONTH_SCORE_SCALE}) AS INTEGER) ELSE 0 END)')}
+        FROM t.month_obs mo
+        JOIN loc_meta m ON m.location_id = mo.location_id
+        GROUP BY m.loc_ref, mo.species_id
+        HAVING MAX(mo.score) >= {LOC_MIN_SCORE}
+        ORDER BY m.loc_ref, mo.species_id
+        """
+    )
+    log(f"  loc_month_species: {db.execute('SELECT COUNT(*) FROM loc_month_species').fetchone()[0]}")
 
     # Zones: rolled up from the finest resolution in targets.db (res 6) to each
     # coarser resolution the UI serves. targets.db carries only res 6.
