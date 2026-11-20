@@ -8,7 +8,10 @@ making subsequent processing faster and requiring less disk space.
 Keeps all complete checklists so hotspot and region aggregates can both be
 built from the same extracted file.
 
-Drops exotic ("X") records and spuhs, slashes, and hybrids. Sub-species taxa
+Drops unapproved records (APPROVED=0: flagged and awaiting review, or
+invalidated by a reviewer), exotic ("X") records and spuhs, slashes, and
+hybrids. Records that never tripped a filter are APPROVED=1 (REVIEWED=0) and
+are kept. Sub-species taxa
 (issf, form, intergrade, domestic) are kept; the EBD reports them under their
 parent species' SCIENTIFIC NAME. Forms without a parent species (e.g.
 undescribed forms) keep their own name and are treated as species.
@@ -90,6 +93,7 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         # Find indices for filter columns
         all_species_idx = header_cols.index("ALL SPECIES REPORTED")
         exotic_idx = header_cols.index("EXOTIC CODE")
+        approved_idx = header_cols.index("APPROVED")
         category_idx = header_cols.index("CATEGORY")
         sci_name_idx = header_cols.index("SCIENTIFIC NAME")
         taxon_order_idx = header_cols.index("TAXONOMIC ORDER")
@@ -101,8 +105,13 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         for line_bytes in proc.stdout:
             cols = line_bytes.decode("utf-8", errors="replace").rstrip("\n").split("\t")
 
-            # Filter: complete checklists, non-escapees, valid categories only
-            if cols[all_species_idx] != "1" or cols[exotic_idx] == "X":
+            # Filter: complete checklists, approved records, non-escapees,
+            # valid categories only
+            if (
+                cols[all_species_idx] != "1"
+                or cols[approved_idx] != "1"
+                or cols[exotic_idx] == "X"
+            ):
                 rows_skipped += 1
                 continue
 
@@ -146,7 +155,7 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print("=" * 50)
     print(f"Total rows read: {total_rows:,}")
     print(f"Rows written: {rows_processed:,}")
-    print(f"Rows skipped (incomplete/exotic/non-species): {rows_skipped:,}")
+    print(f"Rows skipped (incomplete/unapproved/exotic/non-species): {rows_skipped:,}")
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
     print(f"\nOutput written to: {output_file}")

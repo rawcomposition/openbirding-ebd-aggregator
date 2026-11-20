@@ -66,6 +66,10 @@ The CLI will prompt you to:
    - **Extract Sampling** - Extract the gzipped sampling data from the tar
    - **Filter Sampling** - Extract required columns from complete checklists
    - **Build Database** - Generate the SQLite database
+   - **Build Species Ranges** - Fold per-region species range sizes
+     (`species_ranges`, `region_surveyed_cells`) into the targets db, rolled up
+     from the res-6 h3 tables to res 4. Powers the web app's
+     "Range Size" tool.
    - **Build Occurrences DB** - Derive `occurrences-{month}-{year}.db` from the
      targets db: species-occurrence frequencies per hotspot and per H3 cell
      (res 3-4, rolled up from the res-6 h3 tables), plus a typed-array blob
@@ -238,6 +242,43 @@ CREATE INDEX idx_h3_cells_res_latlng ON h3_cells(res, lat, lng);
 A polygon query maps its covering H3 cells to `cell_ref` via
 `idx_h3_cells_h3`, then filters `h3_cell_obs` / `h3_cell_samples` by
 `(res, cell_ref, month)`.
+
+### Species range tables
+
+The **Build Species Ranges** step (`generate_ranges.py`) derives range sizes
+for the world and each country. Res-6 cells roll up to their res-4 parent
+(~1,770 km²); for a country, only res-6 children whose `h3_cells.region_code`
+falls in that country count, so border cells are split. A res-4 cell is
+*surveyed* when its summed checklists (all months) reach `min_samples`
+(default 2), and *occupied* by a species when it is surveyed and the species'
+summed `obs` reach `min_obs` (default 2). Species flagged `extinct` in the
+eBird taxonomy are excluded. Range % = occupied / surveyed,
+computed at query time.
+
+```sql
+CREATE TABLE species_ranges (
+    region_code TEXT NOT NULL,      -- 'world' or a country code
+    species_id INTEGER NOT NULL,
+    occupied_cells INTEGER NOT NULL,
+    obs INTEGER NOT NULL,           -- summed obs across occupied cells (tie-breaker)
+    PRIMARY KEY (region_code, species_id)
+) WITHOUT ROWID;
+
+CREATE TABLE region_surveyed_cells (
+    region_code TEXT PRIMARY KEY,
+    surveyed_cells INTEGER NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE species_ranges_metadata (
+    res INTEGER NOT NULL,
+    min_obs INTEGER NOT NULL,
+    min_samples INTEGER NOT NULL,
+    generated_at TEXT NOT NULL
+);
+```
+
+Re-running **Build H3 Tables** does not drop these tables, so re-run this step
+after it.
 
 ## Notes
 

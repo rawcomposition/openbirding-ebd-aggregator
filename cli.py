@@ -658,6 +658,41 @@ def run_build_h3(paths: dict, env_vars: dict) -> bool:
         return False
 
 
+def run_build_ranges(paths: dict, env_vars: dict) -> bool:
+    """
+    Fold per-region species range sizes (species_ranges, region_surveyed_cells)
+    into the targets database. Must run after Build H3 Tables.
+    Returns True if successful, False otherwise.
+    """
+    db_file = paths["db"]
+
+    print("\n" + "-" * 50)
+    print("Step: Build Species Ranges")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    if not db_file.exists():
+        print(f"\nError: Targets database not found: {db_file}")
+        print("Please run the build database and H3 steps first.")
+        return False
+
+    cmd = [
+        "caffeinate", "-dims",
+        PYTHON, str(SCRIPT_DIR / "generate_ranges.py"),
+        str(db_file),
+        "--memory-limit", f"{env_vars.get('MEMORY_LIMIT', '24')}GB",
+        "--threads", env_vars.get("THREADS", "8"),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nSpecies ranges build complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nSpecies ranges build failed: {e}")
+        return False
+
+
 def run_build_occurrences(paths: dict, env_vars: dict) -> bool:
     """
     Build occurrences.db — a compact companion database of species-occurrence
@@ -1200,6 +1235,10 @@ def run_all_steps(
         print("\nAborting: Build H3 database step failed.")
         sys.exit(1)
 
+    if not run_build_ranges(paths, env_vars):
+        print("\nAborting: Build species ranges step failed.")
+        sys.exit(1)
+
     if not run_build_occurrences(paths, env_vars):
         print("\nAborting: Build occurrences database step failed.")
         sys.exit(1)
@@ -1240,6 +1279,7 @@ def main():
         "Filter Sampling",
         "Build Database",
         "Build H3 Tables",
+        "Build Species Ranges",
         "Build Occurrences DB",
         "Generate Packs",
         "All (without upload)",
@@ -1274,22 +1314,24 @@ def main():
     elif op_idx == 7:
         success = run_build_h3(paths, env_vars)
     elif op_idx == 8:
-        success = run_build_occurrences(paths, env_vars)
+        success = run_build_ranges(paths, env_vars)
     elif op_idx == 9:
-        success = run_generate_packs(paths, env_vars, packs_dir)
+        success = run_build_occurrences(paths, env_vars)
     elif op_idx == 10:
-        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
+        success = run_generate_packs(paths, env_vars, packs_dir)
     elif op_idx == 11:
-        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+        success = run_all_steps(paths, env_vars, datasets_dir, packs_dir, pack_version)
     elif op_idx == 12:
-        success = run_upload_sqlite(paths, env_vars)
+        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
     elif op_idx == 13:
+        success = run_upload_sqlite(paths, env_vars)
+    elif op_idx == 14:
         print()
         regions = prompt_regions()
         print()
         print("=" * 50)
         success = run_generate_beta_packs(paths, env_vars, beta_packs_dir, regions)
-    elif op_idx == 14:
+    elif op_idx == 15:
         success = run_upload_beta_packs(env_vars, beta_packs_dir)
 
     print()
